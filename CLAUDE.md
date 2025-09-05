@@ -1,0 +1,131 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Project Overview
+
+OpenRouter CC is a Go-based HTTP proxy server that translates Anthropic API requests to OpenRouter format, enabling Claude Code to work with OpenRouter's diverse model selection. The entire application is contained in a single `main.go` file (~25k lines) using only Go's standard library.
+
+## Core Architecture
+
+### Request Flow
+1. **Anthropic API Input** (`/v1/messages`) → **Format Transformation** → **OpenRouter API** (`/v1/chat/completions`) → **Response Transformation** → **Anthropic Format Output**
+
+### Key Components
+- **Configuration System**: Multi-source config loading (CLI flags → config files → env vars → defaults)
+- **Message Transformation**: Bidirectional conversion between Anthropic and OpenAI/OpenRouter formats
+- **Streaming Handler**: Server-Sent Events (SSE) processing with proper buffering
+- **Model Mapping**: Configurable mappings for claude-3-opus/sonnet/haiku to any OpenRouter model
+- **Tool/Function Support**: Complete tool calling with JSON schema cleaning
+
+### Data Structures
+- `AnthropicRequest/Response` - Anthropic Messages API format
+- `OpenAIRequest/Message` - OpenRouter/OpenAI chat completions format  
+- `Config` - Unified configuration structure
+- `ContentBlock` - Handles text, tool_use, and tool_result content types
+
+## Development Commands
+
+### Build and Run
+```bash
+# Build binary
+go build -o openrouter-cc main.go
+
+# Run with default config
+./openrouter-cc
+
+# Run with custom config
+./openrouter-cc -port 9000 -api-key YOUR_KEY
+
+# Use wrapper script (starts proxy + Claude Code)
+chmod +x openrouter && ./openrouter
+```
+
+### Testing the Proxy
+```bash
+# Health check
+curl http://localhost:11434/health
+
+# Test message endpoint
+curl -X POST http://localhost:11434/v1/messages \
+  -H "Content-Type: application/json" \
+  -H "X-Api-Key: your-openrouter-key" \
+  -d '{"model":"claude-3-sonnet","messages":[{"role":"user","content":"Hello"}]}'
+```
+
+### Configuration Management
+The configuration system follows this priority: CLI flags > config files > env vars > defaults
+
+Config files searched in order:
+- `~/.config/openrouter-cc/openrouter.{yml,json}`
+- `./openrouter.{yml,json}`
+- `./.env` (environment variables)
+
+## Key Implementation Details
+
+### Message Transformation Logic
+- **System messages**: Extracted from Anthropic format and prepended to OpenAI messages array
+- **Content normalization**: Handles both string content and content block arrays
+- **Tool validation**: Ensures tool_calls have matching tool responses via `validateToolCalls()`
+- **JSON schema cleaning**: Removes unsupported `format: "uri"` properties from tool schemas
+
+### Streaming Implementation  
+- **Line-by-line processing**: Buffers incomplete SSE lines from OpenRouter
+- **Event mapping**: Converts OpenAI delta events to Anthropic content block events
+- **State management**: Tracks content block indices and tool call state during streaming
+
+### Model Mapping Strategy
+```go
+// Built-in model detection
+if strings.Contains(model, "opus") → config.OpusModel
+if strings.Contains(model, "sonnet") → config.SonnetModel  
+if strings.Contains(model, "haiku") → config.HaikuModel
+if strings.Contains(model, "/") → pass-through (OpenRouter model ID)
+else → config.Model (default)
+```
+
+## Release Process
+
+### GitHub Actions Workflow
+- **Trigger**: Git tags (`v*`) or manual dispatch
+- **Cross-compilation**: 6 platforms (Linux/macOS/Windows × AMD64/ARM64)
+- **Assets**: Binaries + wrapper scripts + example configs
+- **Optimization**: Uses `-ldflags="-s -w"` for size reduction
+
+### Manual Release
+```bash
+# Tag and push
+git tag v1.0.0
+git push --tags
+
+# Local cross-compilation example
+GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o openrouter-cc-linux-amd64 main.go
+```
+
+## Configuration Examples
+
+### Multi-provider setup
+```yaml
+# Use different providers for different model tiers
+opus_model: "anthropic/claude-3-opus"      # High-end
+sonnet_model: "openai/gpt-4"              # Mid-tier  
+haiku_model: "google/gemini-pro"          # Fast/cheap
+```
+
+### Local development with Ollama
+```yaml
+base_url: "http://localhost:11434/v1"
+opus_model: "llama3:70b"
+sonnet_model: "llama3:8b"
+```
+
+## Code Patterns
+
+### Error Handling
+All HTTP handlers follow the pattern: validate input → transform → proxy request → transform response → handle errors with proper status codes.
+
+### Configuration Loading
+Multi-source configuration uses the `loadConfig()` function which processes sources in priority order and only overwrites empty values.
+
+### JSON Processing
+Heavy use of `json.RawMessage` for flexible content handling, especially for system messages and tool inputs that can be strings or complex objects.
