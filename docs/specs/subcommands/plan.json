@@ -1,0 +1,261 @@
+{
+  "project": "cli_subcommands_with_cobra",
+  "architecture": "single_file_cobra_simple_functions",
+  "approach": "cobra_framework_with_function_based_implementation",
+  "external_dependencies": [
+    "github.com/spf13/cobra"
+  ],
+  "task_categories": {
+    "foundation": {
+      "description": "Core utilities and Cobra setup",
+      "order": 1,
+      "estimated_hours": 6
+    },
+    "functions": {
+      "description": "Process and file management functions",
+      "order": 2,
+      "estimated_hours": 10
+    },
+    "commands": {
+      "description": "Cobra command implementations",
+      "order": 3,
+      "estimated_hours": 12
+    },
+    "integration": {
+      "description": "Main function refactor and testing",
+      "order": 4,
+      "estimated_hours": 8
+    }
+  },
+  "total_estimated_hours": 36,
+  "tasks": [
+    {
+      "id": "F001",
+      "category": "foundation",
+      "name": "Add Cobra Dependency and Basic Structure",
+      "description": "Add Cobra to go.mod and create basic command structure",
+      "dependencies": [],
+      "deliverables": [
+        "Update go.mod with Cobra dependency",
+        "Create root command structure",
+        "Add persistent flags for existing CLI options",
+        "Create basic command routing"
+      ],
+      "effort_hours": 3,
+      "code_example": "var rootCmd = &cobra.Command{Use: \"openrouter-cc\", Short: \"OpenRouter proxy for Claude Code\"}"
+    },
+    {
+      "id": "F002",
+      "category": "foundation",
+      "name": "Data Directory Management Functions",
+      "description": "Simple functions for managing ~/.openrouter-cc/ directory",
+      "dependencies": [],
+      "deliverables": [
+        "getDataDir() (string, error)",
+        "ensureDataDir() error",
+        "getPidFilePath() (string, error)",
+        "getLogFilePath() (string, error)"
+      ],
+      "effort_hours": 3,
+      "code_example": "func getDataDir() (string, error) { home, _ := os.UserHomeDir(); return filepath.Join(home, \".openrouter-cc\"), nil }"
+    },
+    {
+      "id": "P001",
+      "category": "functions", 
+      "name": "PID File Operations",
+      "description": "Simple functions for PID file management",
+      "dependencies": ["F002"],
+      "deliverables": [
+        "readPidFile() (int, error)",
+        "writePidFile(pid int) error", 
+        "removePidFile() error",
+        "isProcessRunning(pid int) bool"
+      ],
+      "effort_hours": 3,
+      "code_example": "func readPidFile() (int, error) { data, err := os.ReadFile(pidPath); return strconv.Atoi(string(data)) }"
+    },
+    {
+      "id": "P002",
+      "category": "functions",
+      "name": "Process Status Functions",
+      "description": "Functions to check and manage process status",
+      "dependencies": ["P001"],
+      "deliverables": [
+        "getProcessStatus() ProcessStatus",
+        "ProcessStatus struct definition",
+        "Health check integration"
+      ],
+      "effort_hours": 4,
+      "code_example": "type ProcessStatus struct { Running bool; PID int; Port string; Error string }"
+    },
+    {
+      "id": "P003",
+      "category": "functions",
+      "name": "Daemon Management Functions",
+      "description": "Functions to start and stop daemon processes",
+      "dependencies": ["P002"],
+      "deliverables": [
+        "startDaemonProcess() error",
+        "stopDaemonProcess() error",
+        "Signal handling setup",
+        "Cross-platform process management"
+      ],
+      "effort_hours": 3,
+      "platform_notes": "Use os/exec and syscall for Unix, os.Process for Windows"
+    },
+    {
+      "id": "C001", 
+      "category": "commands",
+      "name": "Start Command",
+      "description": "Cobra command to start daemon",
+      "dependencies": ["F001", "P003"],
+      "deliverables": [
+        "startCmd cobra.Command implementation",
+        "Daemon startup logic",
+        "PID file creation",
+        "Status reporting"
+      ],
+      "effort_hours": 3,
+      "code_example": "var startCmd = &cobra.Command{Use: \"start\", Run: func(cmd *cobra.Command, args []string) { startDaemonProcess() }}"
+    },
+    {
+      "id": "C002",
+      "category": "commands", 
+      "name": "Stop Command",
+      "description": "Cobra command to stop daemon",
+      "dependencies": ["F001", "P003"],
+      "deliverables": [
+        "stopCmd cobra.Command implementation",
+        "Graceful shutdown logic",
+        "PID file cleanup",
+        "Timeout handling"
+      ],
+      "effort_hours": 3,
+      "code_example": "var stopCmd = &cobra.Command{Use: \"stop\", Run: func(cmd *cobra.Command, args []string) { stopDaemonProcess() }}"
+    },
+    {
+      "id": "C003",
+      "category": "commands",
+      "name": "Status Command", 
+      "description": "Cobra command to show daemon status",
+      "dependencies": ["F001", "P002"],
+      "deliverables": [
+        "statusCmd cobra.Command implementation",
+        "Process status display",
+        "Health check reporting",
+        "Formatted output"
+      ],
+      "effort_hours": 2,
+      "code_example": "fmt.Printf(\"Server running: %t (PID: %d)\\n\", status.Running, status.PID)"
+    },
+    {
+      "id": "C004",
+      "category": "commands",
+      "name": "Logs Command",
+      "description": "Cobra command to view logs",
+      "dependencies": ["F002"],
+      "deliverables": [
+        "logsCmd cobra.Command implementation", 
+        "Log file tailing functionality",
+        "Follow mode (-f flag)",
+        "Log rotation handling"
+      ],
+      "effort_hours": 2,
+      "code_example": "tail -f equivalent using bufio.Scanner and file.Seek()"
+    },
+    {
+      "id": "C005",
+      "category": "commands",
+      "name": "Code Command",
+      "description": "Cobra command to launch Claude Code",
+      "dependencies": ["F001", "P002"],
+      "deliverables": [
+        "codeCmd cobra.Command implementation",
+        "Auto-start daemon if needed",
+        "Environment variable setup",
+        "Claude Code process spawning"
+      ],
+      "effort_hours": 2,
+      "code_example": "cmd := exec.Command(\"claude\"); cmd.Env = append(os.Environ(), \"ANTHROPIC_BASE_URL=\"+proxyURL)"
+    },
+    {
+      "id": "I001",
+      "category": "integration",
+      "name": "Main Function Refactor",
+      "description": "Refactor main() to use Cobra while preserving backward compatibility",
+      "dependencies": ["C001", "C002", "C003", "C004", "C005"],
+      "deliverables": [
+        "Cobra command setup in main()",
+        "Persistent flags for all existing options",
+        "Legacy mode detection (no subcommand = server mode)",
+        "Config loading integration"
+      ],
+      "effort_hours": 4,
+      "backward_compatibility": "Running 'openrouter-cc -port 9000' continues to work"
+    },
+    {
+      "id": "I002", 
+      "category": "integration",
+      "name": "Server Mode Enhancement",
+      "description": "Extract server logic for reuse by daemon mode",
+      "dependencies": ["I001"],
+      "deliverables": [
+        "startServer() function extraction",
+        "Signal handling for graceful shutdown",
+        "PID file management in server mode",
+        "Enhanced logging"
+      ],
+      "effort_hours": 2,
+      "code_example": "func startServer() { setupSignals(); http.ListenAndServe() }"
+    },
+    {
+      "id": "T001",
+      "category": "integration", 
+      "name": "Comprehensive Testing",
+      "description": "Add comprehensive tests for all functionality",
+      "dependencies": ["I002"],
+      "deliverables": [
+        "Unit tests for all functions",
+        "Integration tests for CLI commands", 
+        "Cross-platform testing",
+        "Backward compatibility tests"
+      ],
+      "effort_hours": 2,
+      "coverage_target": ">90%"
+    }
+  ],
+  "implementation_phases": [
+    {
+      "phase": 1,
+      "name": "Foundation",
+      "tasks": ["F001", "F002"],
+      "duration": "Day 1"
+    },
+    {
+      "phase": 2, 
+      "name": "Core Functions",
+      "tasks": ["P001", "P002", "P003"],
+      "duration": "Day 2-3"
+    },
+    {
+      "phase": 3,
+      "name": "CLI Commands", 
+      "tasks": ["C001", "C002", "C003", "C004", "C005"],
+      "duration": "Day 4-5"
+    },
+    {
+      "phase": 4,
+      "name": "Integration",
+      "tasks": ["I001", "I002", "T001"],
+      "duration": "Day 6"
+    }
+  ],
+  "key_benefits": [
+    "Professional CLI with standard Cobra patterns",
+    "Simple function-based implementation (not over-engineered)",
+    "36 hours total (very reasonable)",
+    "100% backward compatibility",
+    "Single external dependency (Cobra)",
+    "Follows Go community standards"
+  ]
+}

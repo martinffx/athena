@@ -6,6 +6,23 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 OpenRouter CC is a Go-based HTTP proxy server that translates Anthropic API requests to OpenRouter format, enabling Claude Code to work with OpenRouter's diverse model selection. The entire application is contained in a single `main.go` file (~25k lines) using only Go's standard library.
 
+**Status**: Production-ready with all core features implemented and tested.
+
+## Documentation Structure
+
+### Product Documentation (`docs/product/`)
+- **product.md** - Product definition, target users, core features and value propositions
+- **roadmap.md** - Current status (production-ready) and future enhancement priorities
+
+### Technical Standards (`docs/standards/`)
+- **tech.md** - Architecture overview, tech stack, component design, and performance characteristics
+- **style.md** - Code organization, naming conventions, and documentation standards for single-file architecture
+- **practices.md** - TDD workflow, development practices, error handling, and deployment standards
+
+### Feature Specifications (`docs/spec/`)
+- Directory for detailed implementation specifications for new features
+- Use Spec-Driven Development approach for major enhancements
+
 ## Core Architecture
 
 ### Request Flow
@@ -26,15 +43,46 @@ OpenRouter CC is a Go-based HTTP proxy server that translates Anthropic API requ
 
 ## Development Commands
 
+### Quick Setup
+```bash
+# Set up development environment
+make setup
+
+# Copy and edit config
+cp openrouter.example.yml openrouter.yml
+# Edit with your OpenRouter API key
+
+# Build and run
+make dev
+```
+
+### Development Workflow
+```bash
+# Format, lint, test - run before committing
+make check
+
+# Individual commands
+make fmt      # Format code
+make lint     # Run golangci-lint  
+make vet      # Run go vet
+make test     # Run tests
+make build    # Build binary
+
+# Cross-platform builds
+make build-all         # Build for Linux, macOS, Windows
+make release-test      # Test release build process
+```
+
 ### Build and Run
 ```bash
 # Build binary
-go build -o openrouter-cc main.go
+make build
+# or: go build -ldflags="-s -w" -o openrouter-cc main.go
 
 # Run with default config
 ./openrouter-cc
 
-# Run with custom config
+# Run with custom config  
 ./openrouter-cc -port 9000 -api-key YOUR_KEY
 
 # Use wrapper script (starts proxy + Claude Code)
@@ -84,6 +132,27 @@ if strings.Contains(model, "/") → pass-through (OpenRouter model ID)
 else → config.Model (default)
 ```
 
+## Development Standards & Practices
+
+### Code Quality Standards
+- **TDD Approach**: Write tests first for all new functionality (see `docs/standards/practices.md`)
+- **Code Style**: Follow single-file organization patterns (see `docs/standards/style.md`)
+- **Architecture**: Maintain separation of concerns within monolithic structure (see `docs/standards/tech.md`)
+
+### Quality Gates
+All code changes must pass:
+1. **Formatting**: `make fmt` produces no changes
+2. **Linting**: `make lint` passes with zero warnings  
+3. **Testing**: `make test` passes with >80% coverage
+4. **Building**: `make build-all` succeeds for all platforms
+
+### Spec-Driven Development
+For new features, follow the Spec-Driven Development approach:
+1. **Business Context**: Document in `docs/product/` if needed
+2. **Technical Specification**: Create detailed spec in `docs/spec/{feature}/`
+3. **Implementation**: Follow TDD workflow with test-first development
+4. **Documentation**: Update standards and practices as needed
+
 ## Release Process
 
 ### GitHub Actions Workflow
@@ -129,3 +198,14 @@ Multi-source configuration uses the `loadConfig()` function which processes sour
 
 ### JSON Processing
 Heavy use of `json.RawMessage` for flexible content handling, especially for system messages and tool inputs that can be strings or complex objects.
+
+## Performance & Monitoring
+
+### Performance Targets (see `docs/standards/practices.md`)
+- **Transformation latency**: <1ms for typical requests
+- **Memory allocation**: <100KB per request transformation
+- **Throughput**: Handle 1000+ req/sec on standard hardware
+- **Streaming latency**: <50ms first byte time
+
+### Health Monitoring
+The `/health` endpoint provides service status, version, uptime, and request metrics for monitoring and alerting.

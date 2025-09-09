@@ -1,0 +1,150 @@
+{
+  "feature_name": "cli_subcommands",
+  "requirements": {
+    "entities": {
+      "ProcessEntity": "Daemon process lifecycle management",
+      "StateEntity": "PID file and log file management", 
+      "CommandEntity": "CLI command routing and execution",
+      "ConfigEntity": "Enhanced configuration with validation"
+    },
+    "data_persistence": {
+      "pid_files": "~/.openrouter-cc/openrouter-cc.pid",
+      "log_files": "~/.openrouter-cc/openrouter-cc.log",
+      "rotation": "10MB threshold with 3 file retention"
+    },
+    "api_needed": false,
+    "ui_components": {
+      "cli_commands": ["start", "stop", "status", "logs", "code"],
+      "output_formatting": "colored terminal output with status indicators"
+    },
+    "business_rules": {
+      "single_instance": "One daemon per port",
+      "graceful_shutdown": "30 second timeout",
+      "backward_compatibility": "All existing flags preserved"
+    }
+  },
+  "technical_needs": {
+    "domain_model": {
+      "entities": {
+        "ProcessEntity": {
+          "methods": ["start", "stop", "status", "isRunning"],
+          "data": "PID, port, start time"
+        },
+        "StateEntity": {
+          "methods": ["createPidFile", "removePidFile", "readLogs"],
+          "data": "file paths, permissions, locks"
+        },
+        "CommandEntity": {
+          "methods": ["route", "execute", "validate"],
+          "data": "command type, arguments, flags"
+        }
+      },
+      "services": {
+        "ProcessManager": "Cross-platform daemon management",
+        "StateManager": "File-based state persistence",
+        "CommandRouter": "CLI command dispatch"
+      }
+    },
+    "persistence": {
+      "strategy": "file_based",
+      "location": "~/.openrouter-cc/",
+      "files": {
+        "pid": "atomic write with file locking",
+        "logs": "append with rotation"
+      }
+    },
+    "router": {
+      "cli_routing": "cobra framework integration",
+      "http_routing": "existing server unchanged"
+    },
+    "events": {
+      "process_lifecycle": ["started", "stopped", "failed"],
+      "file_operations": ["pid_created", "log_rotated"]
+    },
+    "dependencies": {
+      "external": ["github.com/spf13/cobra"],
+      "internal": ["existing config system", "HTTP server"]
+    }
+  },
+  "design": {
+    "domain_model": {
+      "entities": {
+        "ProcessEntity": {
+          "fields": ["pid", "port", "startTime", "configPath"],
+          "methods": [
+            "fromPidFile() -> ProcessEntity",
+            "toPidFile() -> error", 
+            "validate() -> error",
+            "isAlive() -> bool"
+          ],
+          "validation": "PID exists and matches running process"
+        },
+        "StateEntity": {
+          "fields": ["pidFilePath", "logFilePath", "dataDir"],
+          "methods": [
+            "ensureDataDir() -> error",
+            "lockPidFile() -> error",
+            "rotateLogs() -> error"
+          ],
+          "validation": "Proper file permissions and atomic operations"
+        }
+      },
+      "services": {
+        "ProcessManager": {
+          "methods": [
+            "StartDaemon(config) -> error",
+            "StopDaemon() -> error", 
+            "GetStatus() -> ProcessStatus",
+            "IsRunning() -> bool"
+          ],
+          "platform_specific": true
+        },
+        "StateManager": {
+          "methods": [
+            "SaveProcessState(ProcessEntity) -> error",
+            "LoadProcessState() -> ProcessEntity",
+            "CleanupFiles() -> error"
+          ]
+        }
+      }
+    },
+    "database": null,
+    "endpoints": null,
+    "events": {
+      "publishes": [
+        "ProcessStarted",
+        "ProcessStopped", 
+        "ProcessFailed"
+      ],
+      "subscribes": []
+    },
+    "dependencies": {
+      "internal": {
+        "config_system": "Extends existing loadConfig with validation",
+        "http_server": "Reuses existing server creation logic"
+      },
+      "external": {
+        "cobra": "CLI framework for command routing",
+        "standard_library": "os, os/signal, syscall for process management"
+      }
+    },
+    "architecture_changes": {
+      "main_function": "Becomes command dispatcher instead of direct server start",
+      "config_loading": "Enhanced with validation and display methods", 
+      "server_creation": "Extracted to function for reuse by daemon mode",
+      "logging": "Enhanced with file output and rotation"
+    },
+    "platform_considerations": {
+      "unix": {
+        "signals": "SIGTERM for graceful shutdown",
+        "forking": "os/exec with process group",
+        "locking": "flock for PID file"
+      },
+      "windows": {
+        "signals": "os.Interrupt handling", 
+        "processes": "CREATE_NEW_PROCESS_GROUP",
+        "locking": "File attributes for exclusivity"
+      }
+    }
+  }
+}

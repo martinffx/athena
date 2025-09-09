@@ -1,0 +1,70 @@
+run:
+  timeout: 5m
+  tests: true
+  modules-download-mode: readonly
+
+linters-settings:
+  gofmt:
+    simplify: true
+  goimports:
+    local-prefixes: openrouter-cc
+  govet:
+    check-shadowing: true
+  golint:
+    min-confidence: 0
+  misspell:
+    locale: US
+  revive:
+    rules:
+      - name: exported
+        disabled: false
+      - name: unreachable-code
+        disabled: false
+      - name: unused-parameter
+        disabled: false
+  staticcheck:
+    checks: ["all"]
+
+linters:
+  enable:
+    - gofmt
+    - goimports
+    - govet
+    - staticcheck
+    - unused
+    - misspell
+    - revive
+    - gosec
+    - errcheck
+    - ineffassign
+    - typecheck
+    - exportloopref
+    - goconst
+    - gocyclo
+    - gosimple
+    - gocritic
+  disable:
+    - golint  # deprecated, replaced by revive
+
+issues:
+  exclude-rules:
+    # Disable some linters for test files
+    - path: _test\.go
+      linters:
+        - gocyclo
+        - gosec
+    
+    # Allow long lines in generated code
+    - path: ".*\\.gen\\.go"
+      linters:
+        - lll
+
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+severity:
+  default-severity: error
+  rules:
+    - linters:
+        - misspell
+      severity: warning

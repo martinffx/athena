@@ -1,0 +1,671 @@
+package main
+
+import (
+	"bufio"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
+	"time"
+)
+
+// AnthropicRequest represents the Anthropic Messages API request format
+type AnthropicRequest struct {
+	Model       string          `json:"model"`
+	Messages    []Message       `json:"messages"`
+	System      json.RawMessage `json:"system,omitempty"`
+	Temperature *float64        `json:"temperature,omitempty"`
+	MaxTokens   int             `json:"max_tokens,omitempty"`
+	Stream      bool            `json:"stream,omitempty"`
+	Tools       []Tool          `json:"tools,omitempty"`
+}
+
+// Message represents a message in the conversation
+type Message struct {
+	Role    string          `json:"role"`
+	Content json.RawMessage `json:"content"`
+}
+
+// Tool represents a tool definition
+type Tool struct {
+	Name        string          `json:"name"`
+	Description string          `json:"description,omitempty"`
+	InputSchema json.RawMessage `json:"input_schema"`
+}
+
+// OpenAIRequest represents the OpenAI/OpenRouter chat completions request format
+type OpenAIRequest struct {
+	Model       string          `json:"model"`
+	Messages    []OpenAIMessage `json:"messages"`
+	Temperature *float64        `json:"temperature,omitempty"`
+	Stream      bool            `json:"stream,omitempty"`
+	Tools       []OpenAITool    `json:"tools,omitempty"`
+}
+
+// OpenAIMessage represents a message in OpenAI format
+type OpenAIMessage struct {
+	Role       string      `json:"role"`
+	Content    interface{} `json:"content"`
+	ToolCalls  []ToolCall  `json:"tool_calls,omitempty"`
+	ToolCallID string      `json:"tool_call_id,omitempty"`
+}
+
+// ToolCall represents a tool call in OpenAI format
+type ToolCall struct {
+	ID       string `json:"id"`
+	Type     string `json:"type"`
+	Function struct {
+		Name      string `json:"name"`
+		Arguments string `json:"arguments"`
+	} `json:"function"`
+}
+
+// OpenAITool represents a tool definition in OpenAI format
+type OpenAITool struct {
+	Type     string `json:"type"`
+	Function struct {
+		Name        string          `json:"name"`
+		Description string          `json:"description,omitempty"`
+		Parameters  json.RawMessage `json:"parameters"`
+	} `json:"function"`
+}
+
+// ContentBlock represents a content block in Anthropic format
+type ContentBlock struct {
+	Type      string          `json:"type"`
+	Text      string          `json:"text,omitempty"`
+	ID        string          `json:"id,omitempty"`
+	Name      string          `json:"name,omitempty"`
+	Input     json.RawMessage `json:"input,omitempty"`
+	ToolUseID string          `json:"tool_use_id,omitempty"`
+	Content   json.RawMessage `json:"content,omitempty"`
+}
+
+// transformAnthropicToOpenAI converts Anthropic request to OpenAI format
+func transformAnthropicToOpenAI(req AnthropicRequest) OpenAIRequest {
+	messages := []OpenAIMessage{}
+
+	// Handle system messages
+	if len(req.System) > 0 {
+		var systemContent interface{}
+		var systemArray []ContentBlock
+		if err := json.Unmarshal(req.System, &systemArray); err == nil {
+			for _, item := range systemArray {
+				content := []map[string]interface{}{
+					{
+						"type": "text",
+						"text": item.Text,
+					},
+				}
+				if strings.Contains(req.Model, "claude") {
+					content[0]["cache_control"] = map[string]string{"type": "ephemeral"}
+				}
+				messages = append(messages, OpenAIMessage{
+					Role:    "system",
+					Content: content,
+				})
+			}
+		} else {
+			var systemString string
+			if err := json.Unmarshal(req.System, &systemString); err == nil {
+				content := []map[string]interface{}{
+					{
+						"type": "text",
+						"text": systemString,
+					},
+				}
+				if strings.Contains(req.Model, "claude") {
+					content[0]["cache_control"] = map[string]string{"type": "ephemeral"}
+				}
+				messages = append(messages, OpenAIMessage{
+					Role:    "system",
+					Content: content,
+				})
+			}
+		}
+		_ = systemContent
+	}
+
+	// Transform messages
+	for _, msg := range req.Messages {
+		openAIMsgs := transformMessage(msg)
+		messages = append(messages, openAIMsgs...)
+	}
+
+	// Validate tool calls
+	messages = append(messages[:len(messages)-len(messages)+len(messages[:0])], validateToolCalls(messages)...)
+
+	result := OpenAIRequest{
+		Model:       mapModel(req.Model),
+		Messages:    messages,
+		Temperature: req.Temperature,
+		Stream:      req.Stream,
+	}
+
+	// Transform tools
+	if len(req.Tools) > 0 {
+		tools := []OpenAITool{}
+		for _, tool := range req.Tools {
+			// Remove format: "uri" from parameters
+			cleanedParams := removeUriFormat(tool.InputSchema)
+			tools = append(tools, OpenAITool{
+				Type: "function",
+				Function: struct {
+					Name        string          `json:"name"`
+					Description string          `json:"description,omitempty"`
+					Parameters  json.RawMessage `json:"parameters"`
+				}{
+					Name:        tool.Name,
+					Description: tool.Description,
+					Parameters:  cleanedParams,
+				},
+			})
+		}
+		result.Tools = tools
+	}
+
+	return result
+}
+
+// transformMessage converts a single Anthropic message to OpenAI format
+func transformMessage(msg Message) []OpenAIMessage {
+	result := []OpenAIMessage{}
+
+	var content []ContentBlock
+	if err := json.Unmarshal(msg.Content, &content); err != nil {
+		// Try as string
+		var strContent string
+		if err := json.Unmarshal(msg.Content, &strContent); err == nil {
+			result = append(result, OpenAIMessage{
+				Role:    msg.Role,
+				Content: strContent,
+			})
+		}
+		return result
+	}
+
+	if msg.Role == "assistant" {
+		assistantMsg := OpenAIMessage{
+			Role:    "assistant",
+			Content: nil,
+		}
+		textContent := ""
+		toolCalls := []ToolCall{}
+
+		for _, block := range content {
+			if block.Type == "text" {
+				textContent += block.Text + "\n"
+			} else if block.Type == "tool_use" {
+				args, _ := json.Marshal(block.Input)
+				toolCalls = append(toolCalls, ToolCall{
+					ID:   block.ID,
+					Type: "function",
+					Function: struct {
+						Name      string `json:"name"`
+						Arguments string `json:"arguments"`
+					}{
+						Name:      block.Name,
+						Arguments: string(args),
+					},
+				})
+			}
+		}
+
+		trimmedText := strings.TrimSpace(textContent)
+		if trimmedText != "" {
+			assistantMsg.Content = trimmedText
+		}
+		if len(toolCalls) > 0 {
+			assistantMsg.ToolCalls = toolCalls
+		}
+		if assistantMsg.Content != nil || len(assistantMsg.ToolCalls) > 0 {
+			result = append(result, assistantMsg)
+		}
+	} else if msg.Role == "user" {
+		userText := ""
+		toolMessages := []OpenAIMessage{}
+
+		for _, block := range content {
+			if block.Type == "text" {
+				userText += block.Text + "\n"
+			} else if block.Type == "tool_result" {
+				var content string
+				if err := json.Unmarshal(block.Content, &content); err != nil {
+					content = string(block.Content)
+				}
+				toolMessages = append(toolMessages, OpenAIMessage{
+					Role:       "tool",
+					ToolCallID: block.ToolUseID,
+					Content:    content,
+				})
+			}
+		}
+
+		trimmedText := strings.TrimSpace(userText)
+		if trimmedText != "" {
+			result = append(result, OpenAIMessage{
+				Role:    "user",
+				Content: trimmedText,
+			})
+		}
+		result = append(result, toolMessages...)
+	}
+
+	return result
+}
+
+// validateToolCalls ensures tool calls have matching tool responses
+func validateToolCalls(messages []OpenAIMessage) []OpenAIMessage {
+	validated := []OpenAIMessage{}
+
+	for i, msg := range messages {
+		currentMsg := msg
+
+		if msg.Role == "assistant" && len(msg.ToolCalls) > 0 {
+			validToolCalls := []ToolCall{}
+
+			// Collect immediately following tool messages
+			immediateTools := []OpenAIMessage{}
+			j := i + 1
+			for j < len(messages) && messages[j].Role == "tool" {
+				immediateTools = append(immediateTools, messages[j])
+				j++
+			}
+
+			// Validate each tool call
+			for _, toolCall := range msg.ToolCalls {
+				hasMatch := false
+				for _, toolMsg := range immediateTools {
+					if toolMsg.ToolCallID == toolCall.ID {
+						hasMatch = true
+						break
+					}
+				}
+				if hasMatch {
+					validToolCalls = append(validToolCalls, toolCall)
+				}
+			}
+
+			if len(validToolCalls) > 0 {
+				currentMsg.ToolCalls = validToolCalls
+			} else {
+				currentMsg.ToolCalls = nil
+			}
+
+			if currentMsg.Content != nil || len(currentMsg.ToolCalls) > 0 {
+				validated = append(validated, currentMsg)
+			}
+		} else if msg.Role == "tool" {
+			// Check if previous message has matching tool call
+			hasMatch := false
+			if i > 0 {
+				prevMsg := messages[i-1]
+				if prevMsg.Role == "assistant" {
+					for _, toolCall := range prevMsg.ToolCalls {
+						if toolCall.ID == msg.ToolCallID {
+							hasMatch = true
+							break
+						}
+					}
+				} else if prevMsg.Role == "tool" {
+					// Check for assistant message before tool sequence
+					for k := i - 1; k >= 0; k-- {
+						if messages[k].Role == "tool" {
+							continue
+						}
+						if messages[k].Role == "assistant" {
+							for _, toolCall := range messages[k].ToolCalls {
+								if toolCall.ID == msg.ToolCallID {
+									hasMatch = true
+									break
+								}
+							}
+						}
+						break
+					}
+				}
+			}
+			if hasMatch {
+				validated = append(validated, currentMsg)
+			}
+		} else {
+			validated = append(validated, currentMsg)
+		}
+	}
+
+	return validated
+}
+
+// mapModel maps Anthropic model names to configured OpenRouter models
+func mapModel(anthropicModel string) string {
+	if strings.Contains(anthropicModel, "/") {
+		return anthropicModel
+	}
+
+	if strings.Contains(anthropicModel, "haiku") {
+		return config.HaikuModel
+	} else if strings.Contains(anthropicModel, "sonnet") {
+		return config.SonnetModel
+	} else if strings.Contains(anthropicModel, "opus") {
+		return config.OpusModel
+	}
+
+	return config.Model // Use default model
+}
+
+// removeUriFormat removes unsupported "format": "uri" from JSON schema
+func removeUriFormat(schema json.RawMessage) json.RawMessage {
+	var data interface{}
+	if err := json.Unmarshal(schema, &data); err != nil {
+		return schema
+	}
+
+	cleaned := removeUriFormatFromInterface(data)
+	result, _ := json.Marshal(cleaned)
+	return result
+}
+
+// removeUriFormatFromInterface recursively removes "format": "uri" from data
+func removeUriFormatFromInterface(data interface{}) interface{} {
+	switch v := data.(type) {
+	case map[string]interface{}:
+		result := make(map[string]interface{})
+		for key, value := range v {
+			if key == "format" && value == "uri" {
+				continue
+			}
+			result[key] = removeUriFormatFromInterface(value)
+		}
+		return result
+	case []interface{}:
+		result := make([]interface{}, len(v))
+		for i, item := range v {
+			result[i] = removeUriFormatFromInterface(item)
+		}
+		return result
+	default:
+		return data
+	}
+}
+
+// transformOpenAIToAnthropic converts OpenAI response to Anthropic format
+func transformOpenAIToAnthropic(resp map[string]interface{}, modelName string) map[string]interface{} {
+	messageID := fmt.Sprintf("msg_%d", time.Now().UnixNano())
+
+	content := []map[string]interface{}{}
+	choices := resp["choices"].([]interface{})
+	if len(choices) > 0 {
+		choice := choices[0].(map[string]interface{})
+		message := choice["message"].(map[string]interface{})
+
+		if msgContent, ok := message["content"]; ok && msgContent != nil {
+			content = append(content, map[string]interface{}{
+				"type": "text",
+				"text": msgContent,
+			})
+		}
+
+		if toolCalls, ok := message["tool_calls"]; ok && toolCalls != nil {
+			for _, tc := range toolCalls.([]interface{}) {
+				toolCall := tc.(map[string]interface{})
+				function := toolCall["function"].(map[string]interface{})
+				var input map[string]interface{}
+				if args, ok := function["arguments"].(string); ok {
+					json.Unmarshal([]byte(args), &input)
+				}
+				content = append(content, map[string]interface{}{
+					"type":  "tool_use",
+					"id":    toolCall["id"],
+					"name":  function["name"],
+					"input": input,
+				})
+			}
+		}
+
+		finishReason := choice["finish_reason"].(string)
+		stopReason := "end_turn"
+		if finishReason == "tool_calls" {
+			stopReason = "tool_use"
+		}
+
+		return map[string]interface{}{
+			"id":            messageID,
+			"type":          "message",
+			"role":          "assistant",
+			"content":       content,
+			"stop_reason":   stopReason,
+			"stop_sequence": nil,
+			"model":         modelName,
+		}
+	}
+
+	return map[string]interface{}{
+		"id":            messageID,
+		"type":          "message",
+		"role":          "assistant",
+		"content":       content,
+		"stop_reason":   "end_turn",
+		"stop_sequence": nil,
+		"model":         modelName,
+	}
+}
+
+// handleNonStreamingResponse processes non-streaming responses from OpenRouter
+func handleNonStreamingResponse(w http.ResponseWriter, resp *http.Response, modelName string) {
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		http.Error(w, string(body), resp.StatusCode)
+		return
+	}
+
+	var openAIResp map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&openAIResp); err != nil {
+		http.Error(w, "Failed to decode OpenRouter response", http.StatusInternalServerError)
+		return
+	}
+
+	anthropicResp := transformOpenAIToAnthropic(openAIResp, modelName)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(anthropicResp)
+}
+
+// handleStreamingResponse processes streaming responses from OpenRouter
+func handleStreamingResponse(w http.ResponseWriter, resp *http.Response, modelName string) {
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		http.Error(w, string(body), resp.StatusCode)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "Streaming not supported", http.StatusInternalServerError)
+		return
+	}
+
+	messageID := fmt.Sprintf("msg_%d", time.Now().UnixNano())
+
+	// Send message_start
+	sendSSE(w, flusher, "message_start", map[string]interface{}{
+		"type": "message_start",
+		"message": map[string]interface{}{
+			"id":            messageID,
+			"type":          "message",
+			"role":          "assistant",
+			"content":       []interface{}{},
+			"model":         modelName,
+			"stop_reason":   nil,
+			"stop_sequence": nil,
+			"usage": map[string]int{
+				"input_tokens":  1,
+				"output_tokens": 1,
+			},
+		},
+	})
+
+	contentBlockIndex := 0
+	hasStartedTextBlock := false
+	isToolUse := false
+	currentToolCallID := ""
+	toolCallJSONMap := make(map[string]string)
+
+	scanner := bufio.NewScanner(resp.Body)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+
+		data := strings.TrimPrefix(line, "data: ")
+		if data == "[DONE]" {
+			break
+		}
+
+		var parsed map[string]interface{}
+		if err := json.Unmarshal([]byte(data), &parsed); err != nil {
+			continue
+		}
+
+		if choices, ok := parsed["choices"].([]interface{}); ok && len(choices) > 0 {
+			choice := choices[0].(map[string]interface{})
+			if delta, ok := choice["delta"].(map[string]interface{}); ok {
+				processStreamDelta(w, flusher, delta, &contentBlockIndex, &hasStartedTextBlock,
+					&isToolUse, &currentToolCallID, toolCallJSONMap)
+			}
+		}
+	}
+
+	// Close last content block
+	if isToolUse || hasStartedTextBlock {
+		sendSSE(w, flusher, "content_block_stop", map[string]interface{}{
+			"type":  "content_block_stop",
+			"index": contentBlockIndex,
+		})
+	}
+
+	// Send message_delta and message_stop
+	stopReason := "end_turn"
+	if isToolUse {
+		stopReason = "tool_use"
+	}
+
+	sendSSE(w, flusher, "message_delta", map[string]interface{}{
+		"type": "message_delta",
+		"delta": map[string]interface{}{
+			"stop_reason":   stopReason,
+			"stop_sequence": nil,
+		},
+		"usage": map[string]int{
+			"output_tokens": 150,
+		},
+	})
+
+	sendSSE(w, flusher, "message_stop", map[string]interface{}{
+		"type": "message_stop",
+	})
+}
+
+// processStreamDelta processes individual streaming deltas from OpenRouter
+func processStreamDelta(w http.ResponseWriter, flusher http.Flusher, delta map[string]interface{},
+	contentBlockIndex *int, hasStartedTextBlock *bool, isToolUse *bool,
+	currentToolCallID *string, toolCallJSONMap map[string]string) {
+
+	// Handle tool calls
+	if toolCalls, ok := delta["tool_calls"].([]interface{}); ok && len(toolCalls) > 0 {
+		for _, tc := range toolCalls {
+			toolCall := tc.(map[string]interface{})
+			if id, ok := toolCall["id"].(string); ok && id != *currentToolCallID {
+				// Close previous block if exists
+				if *isToolUse || *hasStartedTextBlock {
+					sendSSE(w, flusher, "content_block_stop", map[string]interface{}{
+						"type":  "content_block_stop",
+						"index": *contentBlockIndex,
+					})
+				}
+
+				*isToolUse = true
+				*hasStartedTextBlock = false
+				*currentToolCallID = id
+				*contentBlockIndex++
+				toolCallJSONMap[id] = ""
+
+				var name string
+				if function, ok := toolCall["function"].(map[string]interface{}); ok {
+					if n, ok := function["name"].(string); ok {
+						name = n
+					}
+				}
+
+				sendSSE(w, flusher, "content_block_start", map[string]interface{}{
+					"type":  "content_block_start",
+					"index": *contentBlockIndex,
+					"content_block": map[string]interface{}{
+						"type":  "tool_use",
+						"id":    id,
+						"name":  name,
+						"input": map[string]interface{}{},
+					},
+				})
+			}
+
+			if function, ok := toolCall["function"].(map[string]interface{}); ok {
+				if args, ok := function["arguments"].(string); ok && *currentToolCallID != "" {
+					toolCallJSONMap[*currentToolCallID] += args
+					sendSSE(w, flusher, "content_block_delta", map[string]interface{}{
+						"type":  "content_block_delta",
+						"index": *contentBlockIndex,
+						"delta": map[string]interface{}{
+							"type":         "input_json_delta",
+							"partial_json": args,
+						},
+					})
+				}
+			}
+		}
+	} else if content, ok := delta["content"].(string); ok && content != "" {
+		// Close tool block if transitioning to text
+		if *isToolUse {
+			sendSSE(w, flusher, "content_block_stop", map[string]interface{}{
+				"type":  "content_block_stop",
+				"index": *contentBlockIndex,
+			})
+			*isToolUse = false
+			*currentToolCallID = ""
+			*contentBlockIndex++
+		}
+
+		if !*hasStartedTextBlock {
+			sendSSE(w, flusher, "content_block_start", map[string]interface{}{
+				"type":  "content_block_start",
+				"index": *contentBlockIndex,
+				"content_block": map[string]interface{}{
+					"type": "text",
+					"text": "",
+				},
+			})
+			*hasStartedTextBlock = true
+		}
+
+		sendSSE(w, flusher, "content_block_delta", map[string]interface{}{
+			"type":  "content_block_delta",
+			"index": *contentBlockIndex,
+			"delta": map[string]interface{}{
+				"type": "text_delta",
+				"text": content,
+			},
+		})
+	}
+}
+
+// sendSSE sends a Server-Sent Event
+func sendSSE(w http.ResponseWriter, flusher http.Flusher, event string, data interface{}) {
+	jsonData, _ := json.Marshal(data)
+	fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, jsonData)
+	flusher.Flush()
+}

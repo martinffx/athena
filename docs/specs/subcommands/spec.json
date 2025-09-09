@@ -1,0 +1,388 @@
+{
+  "feature": "cli-subcommands",
+  "version": "1.0.0",
+  "created_date": "2025-01-08",
+  
+  "user_story": {
+    "persona": "Developer using openrouter-cc proxy",
+    "action": "Control the proxy server with CLI subcommands (start, stop, status, logs, code)",
+    "benefit": "Manage the proxy as a background service and integrate seamlessly with Claude Code workflows"
+  },
+  
+  "acceptance_criteria": [
+    {
+      "id": "AC-01",
+      "title": "Start command creates background daemon",
+      "given": "The proxy is not currently running",
+      "when": "User runs 'openrouter-cc start'",
+      "then": [
+        "Proxy starts as a background daemon process within 5 seconds",
+        "PID file is created at ~/.openrouter-cc/openrouter-cc.pid",
+        "Log file is created at ~/.openrouter-cc/openrouter-cc.log",
+        "Command returns success exit code and daemon PID",
+        "HTTP server becomes available on configured port"
+      ]
+    },
+    {
+      "id": "AC-02", 
+      "title": "Stop command gracefully terminates daemon",
+      "given": "The proxy daemon is running",
+      "when": "User runs 'openrouter-cc stop'",
+      "then": [
+        "Running proxy receives SIGTERM signal",
+        "Proxy completes in-flight requests before stopping",
+        "PID file is removed from ~/.openrouter-cc/",
+        "Process terminates within 30 seconds",
+        "Command returns success exit code"
+      ]
+    },
+    {
+      "id": "AC-03",
+      "title": "Status command shows daemon information", 
+      "given": "User wants to check proxy state",
+      "when": "User runs 'openrouter-cc status'",
+      "then": [
+        "Shows running/stopped status",
+        "Displays PID if running",
+        "Shows port number and bind address", 
+        "Shows uptime duration if running",
+        "Shows last startup time from log file"
+      ]
+    },
+    {
+      "id": "AC-04",
+      "title": "Logs command streams real-time output",
+      "given": "The proxy daemon is generating logs",
+      "when": "User runs 'openrouter-cc logs'", 
+      "then": [
+        "Displays existing log content",
+        "Streams new log entries in real-time",
+        "Handles log rotation gracefully",
+        "Exits cleanly on Ctrl+C"
+      ]
+    },
+    {
+      "id": "AC-05",
+      "title": "Code command launches Claude Code with environment",
+      "given": "The proxy daemon is running",
+      "when": "User runs 'openrouter-cc code'",
+      "then": [
+        "Sets ANTHROPIC_API_KEY environment variable to 'dummy'",
+        "Sets ANTHROPIC_BASE_URL to proxy's local address",
+        "Launches 'claude' command with inherited environment",
+        "Proxy continues running in background",
+        "Returns Claude Code's exit status"
+      ]
+    }
+  ],
+  
+  "business_rules": [
+    {
+      "id": "BR-01",
+      "category": "Process Management",
+      "rule": "Only one proxy instance can run per port",
+      "rationale": "Prevent port conflicts and ensure predictable behavior"
+    },
+    {
+      "id": "BR-02", 
+      "category": "File Management",
+      "rule": "PID and log files stored in ~/.openrouter-cc/ directory",
+      "rationale": "Follow XDG Base Directory standards for user data"
+    },
+    {
+      "id": "BR-03",
+      "category": "Log Management", 
+      "rule": "Log files rotate when they reach 10MB size",
+      "rationale": "Prevent unlimited disk space usage while preserving recent history"
+    },
+    {
+      "id": "BR-04",
+      "category": "Signal Handling",
+      "rule": "Daemon must handle SIGTERM for graceful shutdown",
+      "rationale": "Allow clean termination of in-flight requests and resource cleanup"
+    },
+    {
+      "id": "BR-05",
+      "category": "Backward Compatibility",
+      "rule": "All existing CLI flags must remain functional",
+      "rationale": "Maintain compatibility with existing scripts and workflows"
+    },
+    {
+      "id": "BR-06",
+      "category": "Cross-Platform Support",
+      "rule": "All subcommands must work on Linux, macOS, and Windows",
+      "rationale": "Maintain existing platform support without regression"
+    }
+  ],
+  
+  "scope": {
+    "included": [
+      "Cobra CLI framework integration",
+      "Five subcommands: start, stop, status, logs, code",
+      "Daemon process management with PID file tracking",
+      "Log file management with 10MB rotation",
+      "Cross-platform signal handling (SIGTERM/SIGINT)",
+      "Environment variable setup for Claude Code integration",
+      "Migration of existing flag-based CLI to Cobra structure",
+      "Backward compatibility for all current CLI flags"
+    ],
+    "excluded": [
+      "Breaking changes to existing HTTP API endpoints",
+      "External dependencies beyond Cobra framework",
+      "Persistent state storage beyond PID and log files",
+      "Authentication or authorization for CLI commands",
+      "Remote daemon control or multi-host management",
+      "Service installation (systemd, launchd, Windows services)",
+      "Configuration file changes or new config options"
+    ]
+  },
+  
+  "dependencies": {
+    "internal": [
+      {
+        "component": "Configuration System",
+        "description": "Existing multi-source config loading must integrate with Cobra",
+        "impact": "Need to maintain flag precedence: CLI flags → config files → env vars → defaults"
+      },
+      {
+        "component": "HTTP Server",
+        "description": "Current server implementation must support daemon mode",
+        "impact": "Refactor main() to support both foreground and background modes"
+      },
+      {
+        "component": "Request/Response Handling",
+        "description": "Core proxy functionality remains unchanged",
+        "impact": "No modifications needed to existing transformation logic"
+      }
+    ],
+    "external": [
+      {
+        "dependency": "github.com/spf13/cobra",
+        "version": "^1.8.0",
+        "justification": "Industry-standard CLI framework for Go applications",
+        "impact": "First external dependency - breaks zero-dependency principle but approved in scope"
+      },
+      {
+        "dependency": "Claude Code CLI",
+        "version": "Any", 
+        "justification": "Target integration platform - must be available in PATH",
+        "impact": "Code subcommand will fail gracefully if claude command not found"
+      }
+    ]
+  },
+  
+  "technical_considerations": {
+    "architecture_changes": [
+      {
+        "area": "CLI Structure",
+        "current": "Single main() with flag.StringVar() calls",
+        "proposed": "Cobra root command with subcommands, maintaining flag compatibility",
+        "impact": "Major refactoring of CLI initialization code"
+      },
+      {
+        "area": "Process Management",
+        "current": "Synchronous HTTP server startup",
+        "proposed": "Daemon mode with PID file tracking and signal handling",
+        "impact": "Need process forking/detachment logic for each platform"
+      },
+      {
+        "area": "Logging",
+        "current": "Standard output logging",
+        "proposed": "File-based logging with rotation in daemon mode",
+        "impact": "Implement log rotation and file management"
+      }
+    ],
+    "platform_specific": [
+      {
+        "platform": "Linux/macOS",
+        "considerations": [
+          "Use os.Signal with syscall.SIGTERM/SIGINT",
+          "Fork process using os/exec for daemon mode",
+          "PID file locking with flock system call"
+        ]
+      },
+      {
+        "platform": "Windows", 
+        "considerations": [
+          "Use os.Interrupt for graceful shutdown",
+          "Use os/exec.Command with CREATE_NEW_PROCESS_GROUP",
+          "File locking using Windows file attributes"
+        ]
+      }
+    ],
+    "performance_impact": [
+      {
+        "area": "Memory Usage",
+        "impact": "Cobra adds ~2MB to binary size",
+        "mitigation": "Still within acceptable limits for single binary distribution"
+      },
+      {
+        "area": "Startup Time",
+        "impact": "Additional CLI parsing overhead ~10ms",
+        "mitigation": "Negligible compared to HTTP server startup time"
+      }
+    ],
+    "security_considerations": [
+      {
+        "area": "PID File Security",
+        "risk": "PID file tampering could affect process management",
+        "mitigation": "Validate PID exists and belongs to openrouter-cc process"
+      },
+      {
+        "area": "Log File Access",
+        "risk": "Log files may contain sensitive request data",
+        "mitigation": "Set restrictive file permissions (600) on log files"
+      }
+    ]
+  },
+  
+  "backward_compatibility": {
+    "requirements": [
+      {
+        "area": "CLI Flags",
+        "requirement": "All existing flags (-config, -port, -api-key, etc.) must work identically",
+        "implementation": "Cobra persistent flags mapped to existing configuration variables"
+      },
+      {
+        "area": "Configuration Files",
+        "requirement": "Existing config file formats and locations must continue working",
+        "implementation": "No changes to configuration loading logic"
+      },
+      {
+        "area": "HTTP API",
+        "requirement": "All existing API endpoints must remain unchanged",
+        "implementation": "Core proxy functionality isolated from CLI changes"
+      },
+      {
+        "area": "Binary Behavior",
+        "requirement": "Default behavior (no subcommand) should start server normally",
+        "implementation": "Root command default action starts HTTP server in foreground mode"
+      }
+    ],
+    "migration_path": [
+      {
+        "current_usage": "./openrouter-cc -port 9000",
+        "new_equivalent": "./openrouter-cc -port 9000 (unchanged)",
+        "notes": "Default behavior preserved - starts server in foreground"
+      },
+      {
+        "current_usage": "Background execution via shell &",
+        "new_equivalent": "./openrouter-cc start -port 9000",
+        "notes": "Improved daemon management with proper PID tracking"
+      }
+    ]
+  },
+  
+  "implementation_phases": [
+    {
+      "phase": 1,
+      "title": "Cobra Integration",
+      "tasks": [
+        "Add Cobra dependency to go.mod",
+        "Create root command structure",
+        "Migrate existing flags to Cobra persistent flags", 
+        "Maintain backward compatibility for direct execution"
+      ],
+      "deliverable": "CLI structure refactored with existing behavior preserved"
+    },
+    {
+      "phase": 2,
+      "title": "Basic Process Management",
+      "tasks": [
+        "Implement start subcommand with daemon mode",
+        "Implement stop subcommand with graceful shutdown",
+        "Add PID file management",
+        "Create ~/.openrouter-cc directory structure"
+      ],
+      "deliverable": "Start/stop subcommands functional on primary platform"
+    },
+    {
+      "phase": 3,
+      "title": "Status and Logging",
+      "tasks": [
+        "Implement status subcommand with process information",
+        "Add file-based logging for daemon mode",
+        "Implement logs subcommand with real-time tailing",
+        "Add log rotation at 10MB threshold"
+      ],
+      "deliverable": "Complete process monitoring and logging capabilities"
+    },
+    {
+      "phase": 4,
+      "title": "Claude Code Integration",
+      "tasks": [
+        "Implement code subcommand",
+        "Set up environment variables for Claude Code",
+        "Handle Claude Code process lifecycle",
+        "Add error handling for missing claude command"
+      ],
+      "deliverable": "Seamless Claude Code integration"
+    },
+    {
+      "phase": 5,
+      "title": "Cross-Platform Support",
+      "tasks": [
+        "Test and fix Windows-specific process management",
+        "Verify signal handling across all platforms",
+        "Test PID file locking on different filesystems",
+        "Update build pipeline for new dependency"
+      ],
+      "deliverable": "Full cross-platform compatibility verified"
+    }
+  ],
+  
+  "success_criteria": [
+    {
+      "metric": "Backward Compatibility",
+      "target": "100% of existing CLI usage patterns continue working",
+      "measurement": "Automated tests covering all current flag combinations"
+    },
+    {
+      "metric": "Daemon Reliability", 
+      "target": "Daemon starts/stops successfully 99.9% of the time",
+      "measurement": "Automated process management tests across platforms"
+    },
+    {
+      "metric": "Performance Impact",
+      "target": "CLI command response time <100ms, daemon startup <5s",
+      "measurement": "Benchmark tests for CLI responsiveness"
+    },
+    {
+      "metric": "Cross-Platform Support",
+      "target": "All subcommands work identically on Linux, macOS, Windows",
+      "measurement": "CI pipeline testing on all target platforms"
+    },
+    {
+      "metric": "Claude Code Integration",
+      "target": "Code subcommand successfully launches Claude Code with proper environment",
+      "measurement": "Integration tests with actual Claude Code installation"
+    }
+  ],
+  
+  "risks_and_mitigations": [
+    {
+      "risk": "Breaking Zero-Dependency Principle",
+      "probability": "High",
+      "impact": "Medium", 
+      "mitigation": "Cobra is explicitly approved in scope and widely used in Go ecosystem"
+    },
+    {
+      "risk": "Cross-Platform Process Management Complexity",
+      "probability": "Medium",
+      "impact": "High",
+      "mitigation": "Implement platform-specific process handling with extensive testing"
+    },
+    {
+      "risk": "Backward Compatibility Issues",
+      "probability": "Medium",
+      "impact": "High",
+      "mitigation": "Comprehensive testing of existing CLI patterns and configuration loading"
+    },
+    {
+      "risk": "PID File Race Conditions",
+      "probability": "Low",
+      "impact": "Medium",
+      "mitigation": "Implement proper file locking and PID validation"
+    }
+  ]
+}

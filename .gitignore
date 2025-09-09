@@ -59,6 +59,8 @@ coverage/
 
 # Test artifacts
 .testCoverage.txt
+coverage.out
+coverage.html
 
 # Temporary files
 *.tmp

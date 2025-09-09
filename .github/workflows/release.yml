@@ -10,7 +10,41 @@ permissions:
   contents: write
 
 jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.21'
+
+    - name: Run go fmt
+      run: |
+        if [ "$(gofmt -s -l . | wc -l)" -gt 0 ]; then
+          echo "Code is not formatted. Run 'go fmt ./...' to fix:"
+          gofmt -s -l .
+          exit 1
+        fi
+
+    - name: Run go vet
+      run: go vet ./...
+
+    - name: Run golangci-lint
+      uses: golangci/golangci-lint-action@v3
+      with:
+        version: latest
+        args: --timeout=5m
+
+    - name: Run tests
+      run: go test -v ./...
+
+    - name: Test build
+      run: go build -v ./...
+
   build:
+    needs: lint-and-test
     runs-on: ubuntu-latest
     strategy:
       matrix:
