@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"time"
 )
 
 func main() {
@@ -28,13 +29,24 @@ func main() {
 	}
 
 	http.HandleFunc("/v1/messages", handleMessages)
-	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+	http.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+		if err := json.NewEncoder(w).Encode(map[string]string{"status": "ok"}); err != nil {
+			log.Printf("Failed to encode health response: %v", err)
+		}
 	})
 
 	log.Printf("Starting server on port %s", config.Port)
-	log.Fatal(http.ListenAndServe(":"+config.Port, nil))
+
+	// Create server with proper timeouts for security
+	server := &http.Server{
+		Addr:           ":" + config.Port,
+		ReadTimeout:    30 * time.Second,
+		WriteTimeout:   30 * time.Second,
+		IdleTimeout:    60 * time.Second,
+		MaxHeaderBytes: 1 << 20,
+	}
+	log.Fatal(server.ListenAndServe())
 }
 
 func handleMessages(w http.ResponseWriter, r *http.Request) {
@@ -51,7 +63,7 @@ func handleMessages(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req AnthropicRequest
-	if err := json.Unmarshal(body, &req); err != nil {
+	if unmarshalErr := json.Unmarshal(body, &req); unmarshalErr != nil {
 		http.Error(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}

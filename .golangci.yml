@@ -9,9 +9,8 @@ linters-settings:
   goimports:
     local-prefixes: openrouter-cc
   govet:
-    check-shadowing: true
-  golint:
-    min-confidence: 0
+    enable:
+      - shadow
   misspell:
     locale: US
   revive:
@@ -38,13 +37,12 @@ linters:
     - errcheck
     - ineffassign
     - typecheck
-    - exportloopref
+    - copyloopvar
     - goconst
     - gocyclo
     - gosimple
     - gocritic
-  disable:
-    - golint  # deprecated, replaced by revive
+  disable: []
 
 issues:
   exclude-rules:

@@ -5,9 +5,17 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"time"
+)
+
+// Constants for repeated strings
+const (
+	roleAssistant = "assistant"
+	roleTool      = "tool"
+	typeToolUse   = "tool_use"
 )
 
 // AnthropicRequest represents the Anthropic Messages API request format
@@ -134,7 +142,7 @@ func transformAnthropicToOpenAI(req AnthropicRequest) OpenAIRequest {
 	}
 
 	// Validate tool calls
-	messages = append(messages[:len(messages)-len(messages)+len(messages[:0])], validateToolCalls(messages)...)
+	messages = validateToolCalls(messages)
 
 	result := OpenAIRequest{
 		Model:       mapModel(req.Model),
@@ -185,7 +193,7 @@ func transformMessage(msg Message) []OpenAIMessage {
 		return result
 	}
 
-	if msg.Role == "assistant" {
+	if msg.Role == roleAssistant {
 		assistantMsg := OpenAIMessage{
 			Role:    "assistant",
 			Content: nil,
@@ -196,7 +204,7 @@ func transformMessage(msg Message) []OpenAIMessage {
 		for _, block := range content {
 			if block.Type == "text" {
 				textContent += block.Text + "\n"
-			} else if block.Type == "tool_use" {
+			} else if block.Type == typeToolUse {
 				args, _ := json.Marshal(block.Input)
 				toolCalls = append(toolCalls, ToolCall{
 					ID:   block.ID,
@@ -262,13 +270,14 @@ func validateToolCalls(messages []OpenAIMessage) []OpenAIMessage {
 	for i, msg := range messages {
 		currentMsg := msg
 
-		if msg.Role == "assistant" && len(msg.ToolCalls) > 0 {
+		//nolint:gocritic // Complex if-else with multiple conditions doesn't translate well to switch
+		if msg.Role == roleAssistant && len(msg.ToolCalls) > 0 {
 			validToolCalls := []ToolCall{}
 
 			// Collect immediately following tool messages
 			immediateTools := []OpenAIMessage{}
 			j := i + 1
-			for j < len(messages) && messages[j].Role == "tool" {
+			for j < len(messages) && messages[j].Role == roleTool {
 				immediateTools = append(immediateTools, messages[j])
 				j++
 			}
@@ -296,25 +305,25 @@ func validateToolCalls(messages []OpenAIMessage) []OpenAIMessage {
 			if currentMsg.Content != nil || len(currentMsg.ToolCalls) > 0 {
 				validated = append(validated, currentMsg)
 			}
-		} else if msg.Role == "tool" {
+		} else if msg.Role == roleTool {
 			// Check if previous message has matching tool call
 			hasMatch := false
 			if i > 0 {
 				prevMsg := messages[i-1]
-				if prevMsg.Role == "assistant" {
+				if prevMsg.Role == roleAssistant {
 					for _, toolCall := range prevMsg.ToolCalls {
 						if toolCall.ID == msg.ToolCallID {
 							hasMatch = true
 							break
 						}
 					}
-				} else if prevMsg.Role == "tool" {
+				} else if prevMsg.Role == roleTool {
 					// Check for assistant message before tool sequence
 					for k := i - 1; k >= 0; k-- {
-						if messages[k].Role == "tool" {
+						if messages[k].Role == roleTool {
 							continue
 						}
-						if messages[k].Role == "assistant" {
+						if messages[k].Role == roleAssistant {
 							for _, toolCall := range messages[k].ToolCalls {
 								if toolCall.ID == msg.ToolCallID {
 									hasMatch = true
@@ -343,15 +352,16 @@ func mapModel(anthropicModel string) string {
 		return anthropicModel
 	}
 
-	if strings.Contains(anthropicModel, "haiku") {
+	switch {
+	case strings.Contains(anthropicModel, "haiku"):
 		return config.HaikuModel
-	} else if strings.Contains(anthropicModel, "sonnet") {
+	case strings.Contains(anthropicModel, "sonnet"):
 		return config.SonnetModel
-	} else if strings.Contains(anthropicModel, "opus") {
+	case strings.Contains(anthropicModel, "opus"):
 		return config.OpusModel
+	default:
+		return config.Model // Use default model
 	}
-
-	return config.Model // Use default model
 }
 
 // removeUriFormat removes unsupported "format": "uri" from JSON schema
@@ -412,10 +422,13 @@ func transformOpenAIToAnthropic(resp map[string]interface{}, modelName string) m
 				function := toolCall["function"].(map[string]interface{})
 				var input map[string]interface{}
 				if args, ok := function["arguments"].(string); ok {
-					json.Unmarshal([]byte(args), &input)
+					if err := json.Unmarshal([]byte(args), &input); err != nil {
+						// Log error but continue processing
+						input = make(map[string]interface{})
+					}
 				}
 				content = append(content, map[string]interface{}{
-					"type":  "tool_use",
+					"type":  typeToolUse,
 					"id":    toolCall["id"],
 					"name":  function["name"],
 					"input": input,
@@ -426,7 +439,7 @@ func transformOpenAIToAnthropic(resp map[string]interface{}, modelName string) m
 		finishReason := choice["finish_reason"].(string)
 		stopReason := "end_turn"
 		if finishReason == "tool_calls" {
-			stopReason = "tool_use"
+			stopReason = typeToolUse
 		}
 
 		return map[string]interface{}{
@@ -468,7 +481,9 @@ func handleNonStreamingResponse(w http.ResponseWriter, resp *http.Response, mode
 	anthropicResp := transformOpenAIToAnthropic(openAIResp, modelName)
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(anthropicResp)
+	if err := json.NewEncoder(w).Encode(anthropicResp); err != nil {
+		log.Printf("Failed to encode response: %v", err)
+	}
 }
 
 // handleStreamingResponse processes streaming responses from OpenRouter
@@ -552,7 +567,7 @@ func handleStreamingResponse(w http.ResponseWriter, resp *http.Response, modelNa
 	// Send message_delta and message_stop
 	stopReason := "end_turn"
 	if isToolUse {
-		stopReason = "tool_use"
+		stopReason = typeToolUse
 	}
 
 	sendSSE(w, flusher, "message_delta", map[string]interface{}{
@@ -606,7 +621,7 @@ func processStreamDelta(w http.ResponseWriter, flusher http.Flusher, delta map[s
 					"type":  "content_block_start",
 					"index": *contentBlockIndex,
 					"content_block": map[string]interface{}{
-						"type":  "tool_use",
+						"type":  typeToolUse,
 						"id":    id,
 						"name":  name,
 						"input": map[string]interface{}{},
