@@ -1,3 +1,3 @@
-module openrouter-cc
+module athena
 
 go 1.24.1

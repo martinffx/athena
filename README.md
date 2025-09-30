@@ -1,4 +1,10 @@
-# OpenRouter CC
+# Athena
+
+<p align="center">
+  <img src="athena.jpg" alt="Athena" width="200"/>
+</p>
+
+> *Athena, ancient Greek goddess associated with wisdom, warfare, and handicraft.*
 
 A proxy server that maps Anthropic's API format to OpenRouter, allowing you to use Claude Code with OpenRouter's vast selection of AI models.
 
@@ -16,11 +22,11 @@ A proxy server that maps Anthropic's API format to OpenRouter, allowing you to u
 
 ### One-line install:
 ```bash
-curl -fsSL https://raw.githubusercontent.com/martinrichards/openrouter-cc/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/martinffx/athena/main/install.sh | bash
 ```
 
 ### Manual installation:
-1. Download the latest release from [GitHub Releases](https://github.com/martinrichards/openrouter-cc/releases)
+1. Download the latest release from [GitHub Releases](https://github.com/martinffx/athena/releases)
 2. Extract and move to your PATH
 3. Set up configuration (see below)
 
@@ -28,13 +34,13 @@ curl -fsSL https://raw.githubusercontent.com/martinrichards/openrouter-cc/main/i
 
 The proxy looks for configuration in this priority order:
 1. Command line flags (highest priority)
-2. Config files: `~/.config/openrouter-cc/openrouter.{yml,json}` or `./openrouter.{yml,json}`
+2. Config files: `~/.config/athena/athena.{yml,json}` or `./athena.{yml,json}`
 3. Environment variables (including `.env` file)
 4. Built-in defaults (lowest priority)
 
 ### Config File Example (YAML):
 ```yaml
-# ~/.config/openrouter-cc/openrouter.yml
+# ~/.config/athena/athena.yml
 port: "11434"
 api_key: "your-openrouter-api-key-here"
 base_url: "https://openrouter.ai/api"
@@ -65,16 +71,10 @@ HAIKU_MODEL=anthropic/claude-3.5-haiku
 
 ## Usage
 
-### Option 1: Proxy + Claude Code (Recommended)
+### Option 1: Just the proxy server
 ```bash
-# Starts proxy server and launches Claude Code TUI
-openrouter
-```
-
-### Option 2: Just the proxy server
-```bash
-# Start the proxy server only
-openrouter-cc -api-key YOUR_OPENROUTER_KEY
+# Start the proxy server
+athena -api-key YOUR_OPENROUTER_KEY
 
 # In another terminal, configure Claude Code
 export ANTHROPIC_BASE_URL=http://localhost:11434
@@ -82,10 +82,10 @@ export ANTHROPIC_API_KEY=YOUR_OPENROUTER_KEY
 claude
 ```
 
-### Option 3: Custom configuration
+### Option 2: Custom configuration
 ```bash
 # Use specific models and port
-openrouter-cc \
+athena \
   -port 9000 \
   -api-key YOUR_KEY \
   -opus-model "openai/gpt-4" \
@@ -115,12 +115,9 @@ When Claude Code requests a model:
 ## Building from Source
 
 ```bash
-git clone https://github.com/martinrichards/openrouter-cc.git
-cd openrouter-cc
-go build -o openrouter-cc main.go
-
-# Or use the wrapper script
-chmod +x openrouter
+git clone https://github.com/martinffx/athena.git
+cd athena
+go build -o athena ./cmd/athena
 ```
 
 ## API Compatibility
@@ -176,7 +173,7 @@ haiku_model: "llama3:8b"
 ### Port already in use:
 ```bash
 # Use a different port
-openrouter-cc -port 9000
+athena -port 9000
 ```
 
 ### API key issues:

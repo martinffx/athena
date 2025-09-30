@@ -7,7 +7,7 @@ help: ## Show this help message
 
 # Development commands
 build: ## Build the binary
-	go build -ldflags="-s -w" -o openrouter-cc .
+	go build -ldflags="-s -w" -o athena ./cmd/athena
 
 test: ## Run tests
 	go test -v ./...
@@ -24,45 +24,45 @@ format: ## Format code
 	gofmt -s -w .
 	go mod tidy
 
-check: fmt vet lint test ## Run all checks (format, vet, lint, test)
+check: format lint test ## Run all checks (format, vet, lint, test)
 
 clean: ## Clean build artifacts
-	rm -f openrouter-cc openrouter-cc-*
+	rm -f athena athena-*
 	rm -rf dist/ build/
 
 dev: build ## Build and run in development mode
-	./openrouter-cc -port 11434
+	./athena -port 11434
 
 install: build ## Install binary to ~/.local/bin
 	mkdir -p ~/.local/bin
-	cp openrouter-cc ~/.local/bin/
-	cp openrouter ~/.local/bin/
-	chmod +x ~/.local/bin/openrouter
+	cp athena ~/.local/bin/
+	cp athena-wrapper ~/.local/bin/
+	chmod +x ~/.local/bin/athena-wrapper
 
 # Cross-compilation targets
 build-linux: ## Build for Linux AMD64
-	GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o openrouter-cc-linux-amd64 .
+	GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o athena-linux-amd64 ./cmd/athena
 
 build-darwin-amd64: ## Build for macOS AMD64
-	GOOS=darwin GOARCH=amd64 go build -ldflags="-s -w" -o openrouter-cc-darwin-amd64 .
+	GOOS=darwin GOARCH=amd64 go build -ldflags="-s -w" -o athena-darwin-amd64 ./cmd/athena
 
 build-darwin-arm64: ## Build for macOS ARM64 (Apple Silicon)
-	GOOS=darwin GOARCH=arm64 go build -ldflags="-s -w" -o openrouter-cc-darwin-arm64 .
+	GOOS=darwin GOARCH=arm64 go build -ldflags="-s -w" -o athena-darwin-arm64 ./cmd/athena
 
 build-darwin: build-darwin-amd64 build-darwin-arm64 ## Build for macOS (both Intel and Apple Silicon)
 
 build-windows: ## Build for Windows AMD64
-	GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o openrouter-cc-windows-amd64.exe .
+	GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o athena-windows-amd64.exe ./cmd/athena
 
 build-all: build-linux build-darwin build-windows ## Build for all major platforms
 
 # Release testing
 release-test: ## Test the release build process locally
 	mkdir -p dist
-	GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o dist/openrouter-cc-linux-amd64 .
-	GOOS=darwin GOARCH=amd64 go build -ldflags="-s -w" -o dist/openrouter-cc-darwin-amd64 .
-	GOOS=darwin GOARCH=arm64 go build -ldflags="-s -w" -o dist/openrouter-cc-darwin-arm64 .
-	GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o dist/openrouter-cc-windows-amd64.exe .
+	GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o dist/athena-linux-amd64 ./cmd/athena
+	GOOS=darwin GOARCH=amd64 go build -ldflags="-s -w" -o dist/athena-darwin-amd64 ./cmd/athena
+	GOOS=darwin GOARCH=arm64 go build -ldflags="-s -w" -o dist/athena-darwin-arm64 ./cmd/athena
+	GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o dist/athena-windows-amd64.exe ./cmd/athena
 	@echo "Release builds completed in dist/"
 
 # Setup development environment

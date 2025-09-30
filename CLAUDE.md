@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-OpenRouter CC is a Go-based HTTP proxy server that translates Anthropic API requests to OpenRouter format, enabling Claude Code to work with OpenRouter's diverse model selection. The entire application is contained in a single `main.go` file (~25k lines) using only Go's standard library.
+Athena is a Go-based HTTP proxy server that translates Anthropic API requests to OpenRouter format, enabling Claude Code to work with OpenRouter's diverse model selection. The application uses only Go's standard library and follows standard Go project layout with `cmd/` and `internal/` packages.
 
 **Status**: Production-ready with all core features implemented and tested.
 
@@ -77,16 +77,13 @@ make release-test      # Test release build process
 ```bash
 # Build binary
 make build
-# or: go build -ldflags="-s -w" -o openrouter-cc main.go
+# or: go build -ldflags="-s -w" -o athena ./cmd/athena
 
 # Run with default config
-./openrouter-cc
+./athena
 
-# Run with custom config  
-./openrouter-cc -port 9000 -api-key YOUR_KEY
-
-# Use wrapper script (starts proxy + Claude Code)
-chmod +x openrouter && ./openrouter
+# Run with custom config
+./athena -port 9000 -api-key YOUR_KEY
 ```
 
 ### Testing the Proxy
@@ -105,8 +102,8 @@ curl -X POST http://localhost:11434/v1/messages \
 The configuration system follows this priority: CLI flags > config files > env vars > defaults
 
 Config files searched in order:
-- `~/.config/openrouter-cc/openrouter.{yml,json}`
-- `./openrouter.{yml,json}`
+- `~/.config/athena/athena.{yml,json}`
+- `./athena.{yml,json}`
 - `./.env` (environment variables)
 
 ## Key Implementation Details
@@ -168,7 +165,7 @@ git tag v1.0.0
 git push --tags
 
 # Local cross-compilation example
-GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o openrouter-cc-linux-amd64 main.go
+GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o athena-linux-amd64 ./cmd/athena
 ```
 
 ## Configuration Examples

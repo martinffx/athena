@@ -84,24 +84,24 @@ jobs:
       run: |
         mkdir -p dist
         if [ "$GOOS" = "windows" ]; then
-          go build -ldflags="-s -w" -o dist/openrouter-cc-${{ matrix.platform }}.exe main.go
+          go build -ldflags="-s -w" -o dist/athena-${{ matrix.platform }}.exe main.go
         else
-          go build -ldflags="-s -w" -o dist/openrouter-cc-${{ matrix.platform }} main.go
+          go build -ldflags="-s -w" -o dist/athena-${{ matrix.platform }} main.go
         fi
 
     - name: Create wrapper script (Unix)
       if: matrix.goos != 'windows'
       run: |
-        cat > dist/openrouter-${{ matrix.platform }} << 'EOF'
+        cat > dist/athena-wrapper-${{ matrix.platform }} << 'EOF'
         #!/bin/bash
-        
-        # OpenRouter Proxy + Claude Code TUI Launcher
+
+        # Athena Proxy + Claude Code TUI Launcher
         # This script starts the proxy server and launches Claude Code with the proxy configuration
-        
+
         set -e
-        
+
         SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-        BINARY="$SCRIPT_DIR/openrouter-cc-${{ matrix.platform }}"
+        BINARY="$SCRIPT_DIR/athena-${{ matrix.platform }}"
         PROXY_PORT="${PROXY_PORT:-11434}"
         PROXY_URL="http://localhost:$PROXY_PORT"
         
@@ -113,19 +113,19 @@ jobs:
         NC='\033[0m' # No Color
         
         log() {
-            echo -e "${BLUE}[openrouter]${NC} $1"
+            echo -e "${BLUE}[athena]${NC} $1"
         }
-        
+
         warn() {
-            echo -e "${YELLOW}[openrouter]${NC} $1"
+            echo -e "${YELLOW}[athena]${NC} $1"
         }
-        
+
         error() {
-            echo -e "${RED}[openrouter]${NC} $1"
+            echo -e "${RED}[athena]${NC} $1"
         }
-        
+
         success() {
-            echo -e "${GREEN}[openrouter]${NC} $1"
+            echo -e "${GREEN}[athena]${NC} $1"
         }
         
         # Check if binary exists
@@ -222,7 +222,7 @@ jobs:
             fi
         else
             # Start the proxy server in background
-            log "Starting openrouter-cc proxy server on port $PROXY_PORT..."
+            log "Starting athena proxy server on port $PROXY_PORT..."
             "$BINARY" -port "$PROXY_PORT" "$@" &
             PROXY_PID=$!
             
@@ -245,7 +245,7 @@ jobs:
             
             # Try to get from config files
             if [[ -z "$ANTHROPIC_API_KEY" ]]; then
-                for config in "$HOME/.config/openrouter-cc/openrouter.yml" "$HOME/.config/openrouter-cc/openrouter.json" "$SCRIPT_DIR/openrouter.yml" "$SCRIPT_DIR/openrouter.json"; do
+                for config in "$HOME/.config/athena/athena.yml" "$HOME/.config/athena/athena.json" "$SCRIPT_DIR/athena.yml" "$SCRIPT_DIR/athena.json"; do
                     if [[ -f "$config" ]]; then
                         if [[ "$config" == *.yml ]]; then
                             API_KEY=$(grep -E '^api_key:' "$config" | sed 's/^api_key:[[:space:]]*["\'"'"']?\([^"'"'"']*\)["\'"'"']?[[:space:]]*$/\1/')
@@ -275,38 +275,38 @@ jobs:
         
         # Cleanup happens automatically via trap
         EOF
-        chmod +x dist/openrouter-${{ matrix.platform }}
+        chmod +x dist/athena-wrapper-${{ matrix.platform }}
 
     - name: Create wrapper script (Windows)
       if: matrix.goos == 'windows'
       run: |
-        cat > dist/openrouter-${{ matrix.platform }}.bat << 'EOF'
+        cat > dist/athena-wrapper-${{ matrix.platform }}.bat << 'EOF'
         @echo off
         setlocal
-        
+
         set "SCRIPT_DIR=%~dp0"
-        set "BINARY=%SCRIPT_DIR%openrouter-cc-${{ matrix.platform }}.exe"
+        set "BINARY=%SCRIPT_DIR%athena-${{ matrix.platform }}.exe"
         if "%PROXY_PORT%"=="" set "PROXY_PORT=11434"
         set "PROXY_URL=http://localhost:%PROXY_PORT%"
         
-        echo [openrouter] Starting OpenRouter Proxy + Claude Code TUI...
-        
+        echo [athena] Starting Athena Proxy + Claude Code TUI...
+
         rem Check if binary exists
         if not exist "%BINARY%" (
-            echo [openrouter] Error: Binary not found: %BINARY%
+            echo [athena] Error: Binary not found: %BINARY%
             exit /b 1
         )
-        
+
         rem Check if claude command exists
         claude --version >nul 2>&1
         if errorlevel 1 (
-            echo [openrouter] Error: Claude Code CLI not found. Please install Claude Code first.
+            echo [athena] Error: Claude Code CLI not found. Please install Claude Code first.
             echo Visit: https://claude.ai/code
             exit /b 1
         )
-        
+
         rem Start the proxy server in background
-        echo [openrouter] Starting proxy server on port %PROXY_PORT%...
+        echo [athena] Starting proxy server on port %PROXY_PORT%...
         start /b "" "%BINARY%" -port %PROXY_PORT% %*
         
         rem Wait a bit for server to start
@@ -323,18 +323,18 @@ jobs:
         )
         
         if "%ANTHROPIC_API_KEY%"=="" (
-            echo [openrouter] Warning: No API key found. Claude Code will prompt for authentication.
-            echo [openrouter] Warning: Set OPENROUTER_API_KEY in your .env file for automatic authentication.
+            echo [athena] Warning: No API key found. Claude Code will prompt for authentication.
+            echo [athena] Warning: Set OPENROUTER_API_KEY in your .env file for automatic authentication.
         )
-        
-        echo [openrouter] Launching Claude Code TUI...
-        echo [openrouter] Proxy URL: %PROXY_URL%
-        
+
+        echo [athena] Launching Claude Code TUI...
+        echo [athena] Proxy URL: %PROXY_URL%
+
         rem Launch Claude Code
         claude
-        
+
         rem Kill background processes (best effort)
-        taskkill /f /im openrouter-cc-${{ matrix.platform }}.exe >nul 2>&1
+        taskkill /f /im athena-${{ matrix.platform }}.exe >nul 2>&1
         EOF
 
     - name: Upload artifacts
@@ -359,55 +359,55 @@ jobs:
     - name: Prepare release assets
       run: |
         mkdir -p release
-        find artifacts -name "openrouter-cc-*" -type f -exec cp {} release/ \;
-        find artifacts -name "openrouter-*" -type f -exec cp {} release/ \;
+        find artifacts -name "athena-*" -type f -exec cp {} release/ \;
+        find artifacts -name "athena-wrapper-*" -type f -exec cp {} release/ \;
         
         # Copy example configs to release
-        cp openrouter.example.yml release/
-        cp openrouter.example.json release/
+        cp athena.example.yml release/ || cp openrouter.example.yml release/athena.example.yml 2>/dev/null || true
+        cp athena.example.json release/ || cp openrouter.example.json release/athena.example.json 2>/dev/null || true
         cp .env.example release/
-        
+
         # Create README for release
         cat > release/README.md << 'EOF'
-        # OpenRouter CC - Anthropic to OpenRouter Proxy
-        
+        # Athena - Anthropic to OpenRouter Proxy
+
         This proxy allows you to use Claude Code with OpenRouter's vast selection of models.
-        
+
         ## Quick Start
-        
+
         1. Download the appropriate binary for your platform
-        2. Copy the example config: `cp openrouter.example.yml openrouter.yml`
+        2. Copy the example config: `cp athena.example.yml athena.yml`
         3. Edit the config with your OpenRouter API key
-        4. Run: `./openrouter-<platform>` (Unix) or `openrouter-<platform>.bat` (Windows)
-        
+        4. Run: `./athena-wrapper-<platform>` (Unix) or `athena-wrapper-<platform>.bat` (Windows)
+
         ## Files
-        
-        - `openrouter-cc-<platform>`: The proxy server binary
-        - `openrouter-<platform>`: Wrapper script that starts proxy + Claude Code
-        - `openrouter.example.yml`: Example YAML configuration
-        - `openrouter.example.json`: Example JSON configuration  
+
+        - `athena-<platform>`: The proxy server binary
+        - `athena-wrapper-<platform>`: Wrapper script that starts proxy + Claude Code
+        - `athena.example.yml`: Example YAML configuration
+        - `athena.example.json`: Example JSON configuration
         - `.env.example`: Example environment variables file
-        
+
         ## Configuration
-        
+
         The proxy looks for configuration in this order:
         1. Command line flags
-        2. Config files: `~/.config/openrouter-cc/openrouter.{yml,json}` or `./openrouter.{yml,json}`
+        2. Config files: `~/.config/athena/athena.{yml,json}` or `./athena.{yml,json}`
         3. Environment variables (including `.env` file)
         4. Built-in defaults
-        
+
         ## Usage
-        
+
         ### Just the proxy server:
         ```bash
-        ./openrouter-cc-<platform> -api-key YOUR_KEY
+        ./athena-<platform> -api-key YOUR_KEY
         ```
-        
+
         ### Proxy + Claude Code TUI:
         ```bash
-        ./openrouter-<platform>
+        ./athena-wrapper-<platform>
         ```
-        
+
         The proxy runs on port 11434 by default and provides an Anthropic-compatible API that forwards to OpenRouter.
         EOF
 
@@ -416,26 +416,26 @@ jobs:
       with:
         files: release/*
         body: |
-          ## OpenRouter CC Release
-          
+          ## Athena Release
+
           Anthropic to OpenRouter proxy server with Claude Code integration.
-          
+
           ### Features
           - Maps Anthropic API calls to OpenRouter format
           - Supports streaming responses
-          - Tool/function calling support  
+          - Tool/function calling support
           - Configurable model mappings (Opus, Sonnet, Haiku)
           - Multiple configuration methods (CLI, config files, env vars)
           - Integrated Claude Code TUI launcher
-          
+
           ### Downloads
-          - **Linux AMD64**: `openrouter-cc-linux-amd64` + `openrouter-linux-amd64`
-          - **Linux ARM64**: `openrouter-cc-linux-arm64` + `openrouter-linux-arm64`  
-          - **macOS Intel**: `openrouter-cc-darwin-amd64` + `openrouter-darwin-amd64`
-          - **macOS Apple Silicon**: `openrouter-cc-darwin-arm64` + `openrouter-darwin-arm64`
-          - **Windows AMD64**: `openrouter-cc-windows-amd64.exe` + `openrouter-windows-amd64.bat`
-          - **Windows ARM64**: `openrouter-cc-windows-arm64.exe` + `openrouter-windows-arm64.bat`
-          
+          - **Linux AMD64**: `athena-linux-amd64` + `athena-wrapper-linux-amd64`
+          - **Linux ARM64**: `athena-linux-arm64` + `athena-wrapper-linux-arm64`
+          - **macOS Intel**: `athena-darwin-amd64` + `athena-wrapper-darwin-amd64`
+          - **macOS Apple Silicon**: `athena-darwin-arm64` + `athena-wrapper-darwin-arm64`
+          - **Windows AMD64**: `athena-windows-amd64.exe` + `athena-wrapper-windows-amd64.bat`
+          - **Windows ARM64**: `athena-windows-arm64.exe` + `athena-wrapper-windows-arm64.bat`
+
           See the included `README.md` for setup instructions.
         draft: false
         prerelease: false
