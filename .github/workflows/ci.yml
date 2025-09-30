@@ -108,6 +108,7 @@ jobs:
 
     - name: Test CLI commands (Windows)
       if: runner.os == 'Windows'
+      shell: bash
       run: |
         echo "🧪 Testing CLI subcommands on Windows..."
 

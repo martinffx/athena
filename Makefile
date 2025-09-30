@@ -7,7 +7,11 @@ help: ## Show this help message
 
 # Development commands
 build: ## Build the binary
+ifeq ($(OS),Windows_NT)
+	go build -ldflags="-s -w" -o athena.exe ./cmd/athena
+else
 	go build -ldflags="-s -w" -o athena ./cmd/athena
+endif
 
 test: ## Run tests
 	go test -v ./...
