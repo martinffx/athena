@@ -20,11 +20,15 @@ test-coverage: ## Run tests with coverage
 lint: ## Run linting
 	golangci-lint run
 
+vuln: ## Run vulnerability check
+	go install golang.org/x/vuln/cmd/govulncheck@latest
+	govulncheck ./...
+
 format: ## Format code
 	gofmt -s -w .
 	go mod tidy
 
-check: format lint test ## Run all checks (format, vet, lint, test)
+check: format lint test vuln ## Run all checks (format, lint, test, vuln)
 
 clean: ## Clean build artifacts
 	rm -f athena athena-*

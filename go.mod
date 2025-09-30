@@ -1,6 +1,6 @@
 module athena
 
-go 1.24.1
+go 1.24.7
 
 require github.com/spf13/cobra v1.10.1
 
