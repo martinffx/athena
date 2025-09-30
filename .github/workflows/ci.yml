@@ -88,9 +88,97 @@ jobs:
     - name: Test build
       run: |
         echo "🔨 Testing build..."
-        go build -v -ldflags="-s -w" -o openrouter-cc-test main.go
-        ./openrouter-cc-test --help > /dev/null
+        go build -v -ldflags="-s -w" -o athena-test ./cmd/athena
+        ./athena-test --help > /dev/null
         echo "✅ Build successful"
+
+    - name: Check binary size
+      run: |
+        BINARY_SIZE=$(stat -f%z athena-test 2>/dev/null || stat -c%s athena-test)
+        echo "📦 Binary size: $(numfmt --to=iec-i --suffix=B $BINARY_SIZE 2>/dev/null || echo $BINARY_SIZE bytes)"
+        # Warn if binary exceeds 10MB (Cobra should add <5MB)
+        if [ $BINARY_SIZE -gt 10485760 ]; then
+          echo "⚠️  Warning: Binary size exceeds 10MB threshold"
+          echo "Binary size: $BINARY_SIZE bytes"
+        else
+          echo "✅ Binary size within acceptable limits"
+        fi
+
+  # Test CLI subcommands on multiple platforms
+  cli-tests:
+    runs-on: ${{ matrix.os }}
+    needs: lint-and-test
+
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.21'
+
+    - name: Download dependencies
+      run: go mod download
+
+    - name: Build binary
+      run: |
+        go build -v -ldflags="-s -w" -o athena${{ matrix.os == 'windows-latest' && '.exe' || '' }} ./cmd/athena
+
+    - name: Test CLI commands (Unix)
+      if: runner.os != 'Windows'
+      run: |
+        echo "🧪 Testing CLI subcommands on ${{ runner.os }}..."
+
+        # Test help
+        ./athena --help
+        ./athena start --help
+        ./athena stop --help
+        ./athena status --help
+        ./athena logs --help
+        ./athena code --help
+
+        # Test version/help flags work
+        ./athena --version || true  # May not have version flag
+
+        echo "✅ CLI commands validated on ${{ runner.os }}"
+
+    - name: Test CLI commands (Windows)
+      if: runner.os == 'Windows'
+      run: |
+        echo "🧪 Testing CLI subcommands on Windows..."
+
+        # Test help
+        ./athena.exe --help
+        ./athena.exe start --help
+        ./athena.exe stop --help
+        ./athena.exe status --help
+        ./athena.exe logs --help
+        ./athena.exe code --help
+
+        echo "✅ CLI commands validated on Windows"
+
+    - name: CLI response time benchmark
+      if: runner.os != 'Windows'
+      run: |
+        echo "⏱️  Benchmarking CLI response times..."
+
+        # Test help command response time (<100ms target)
+        TIME_START=$(date +%s%N)
+        ./athena --help > /dev/null
+        TIME_END=$(date +%s%N)
+        ELAPSED_MS=$(( ($TIME_END - $TIME_START) / 1000000 ))
+
+        echo "CLI help command: ${ELAPSED_MS}ms"
+        if [ $ELAPSED_MS -gt 100 ]; then
+          echo "⚠️  Warning: CLI response time exceeded 100ms threshold"
+        else
+          echo "✅ CLI response time within acceptable limits"
+        fi
 
   # Test cross-platform builds (only on main branch)
   cross-platform-build:
@@ -129,9 +217,9 @@ jobs:
       run: |
         echo "🔨 Building for ${{ matrix.goos }}-${{ matrix.goarch }}..."
         if [ "$GOOS" = "windows" ]; then
-          go build -ldflags="-s -w" -o openrouter-cc-${{ matrix.goos }}-${{ matrix.goarch }}.exe main.go
+          go build -ldflags="-s -w" -o athena-${{ matrix.goos }}-${{ matrix.goarch }}.exe ./cmd/athena
         else
-          go build -ldflags="-s -w" -o openrouter-cc-${{ matrix.goos }}-${{ matrix.goarch }} main.go
+          go build -ldflags="-s -w" -o athena-${{ matrix.goos }}-${{ matrix.goarch }} ./cmd/athena
         fi
         echo "✅ Build successful"
 
