@@ -15,22 +15,13 @@ jobs:
       uses: actions/checkout@v4
 
     - name: Set up Go
-      uses: actions/setup-go@v4
+      uses: actions/setup-go@v5
       with:
-        go-version: '1.21'
+        go-version: '1.21.x'
+        cache: true  # Enable automatic caching
 
-    - name: Cache Go modules
-      uses: actions/cache@v3
-      with:
-        path: |
-          ~/.cache/go-build
-          ~/go/pkg/mod
-        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-        restore-keys: |
-          ${{ runner.os }}-go-
-
-    - name: Download dependencies
-      run: go mod download
+    - name: Install dependencies
+      run: go get .
 
     - name: Run go fmt check
       run: |
@@ -118,12 +109,10 @@ jobs:
       uses: actions/checkout@v4
 
     - name: Set up Go
-      uses: actions/setup-go@v4
+      uses: actions/setup-go@v5
       with:
-        go-version: '1.21'
-
-    - name: Download dependencies
-      run: go mod download
+        go-version: '1.21.x'
+        cache: true
 
     - name: Build binary
       run: |
@@ -205,9 +194,10 @@ jobs:
       uses: actions/checkout@v4
 
     - name: Set up Go
-      uses: actions/setup-go@v4
+      uses: actions/setup-go@v5
       with:
-        go-version: '1.21'
+        go-version: '1.21.x'
+        cache: true
 
     - name: Build for ${{ matrix.goos }}-${{ matrix.goarch }}
       env:
@@ -233,9 +223,10 @@ jobs:
       uses: actions/checkout@v4
 
     - name: Set up Go
-      uses: actions/setup-go@v4
+      uses: actions/setup-go@v5
       with:
-        go-version: '1.21'
+        go-version: '1.21.x'
+        cache: true
 
     - name: Run Gosec Security Scanner
       uses: securecodewarrior/github-action-gosec@master
