@@ -21,28 +21,23 @@ jobs:
         go-version: '1.21.x'
         cache: true
 
-    - name: Run go fmt
+    - name: Run format check
       run: |
-        if [ "$(gofmt -s -l . | wc -l)" -gt 0 ]; then
-          echo "Code is not formatted. Run 'go fmt ./...' to fix:"
-          gofmt -s -l .
+        make format
+        if ! git diff --quiet; then
+          echo "Code is not formatted. Run 'make format' to fix:"
+          git diff
           exit 1
         fi
 
-    - name: Run go vet
-      run: go vet ./...
-
-    - name: Run golangci-lint
-      uses: golangci/golangci-lint-action@v3
-      with:
-        version: latest
-        args: --timeout=5m
+    - name: Run linting
+      run: make lint
 
     - name: Run tests
-      run: go test -v ./...
+      run: make test
 
     - name: Test build
-      run: go build -v ./...
+      run: make build
 
   build:
     needs: lint-and-test

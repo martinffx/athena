@@ -23,50 +23,21 @@ jobs:
     - name: Install dependencies
       run: go get .
 
-    - name: Run go fmt check
+    - name: Run format check
       run: |
-        if [ "$(gofmt -s -l . | wc -l)" -gt 0 ]; then
-          echo "❌ Code is not formatted. Run 'make fmt' to fix:"
-          gofmt -s -l .
-          echo ""
-          echo "Diff:"
-          gofmt -s -d .
+        make format
+        if ! git diff --quiet; then
+          echo "❌ Code is not formatted. Run 'make format' to fix:"
+          git diff
           exit 1
         fi
-        echo "✅ Code is properly formatted"
+        echo "✅ Code is properly formatted and tidy"
 
-    - name: Run go mod tidy check
-      run: |
-        go mod tidy
-        if ! git diff --quiet go.mod go.sum; then
-          echo "❌ go.mod or go.sum is not tidy. Run 'go mod tidy' to fix"
-          git diff go.mod go.sum
-          exit 1
-        fi
-        echo "✅ go.mod and go.sum are tidy"
+    - name: Run linting
+      run: make lint
 
-    - name: Run go vet
-      run: |
-        echo "🔍 Running go vet..."
-        go vet ./...
-        echo "✅ go vet passed"
-
-    - name: Run golangci-lint
-      uses: golangci/golangci-lint-action@v3
-      with:
-        version: latest
-        args: --timeout=5m --verbose
-
-    - name: Run tests
-      run: |
-        echo "🧪 Running tests..."
-        go test -v -race -coverprofile=coverage.out ./...
-        echo "✅ Tests passed"
-
-    - name: Generate coverage report
-      run: |
-        go tool cover -html=coverage.out -o coverage.html
-        go tool cover -func=coverage.out
+    - name: Run tests with coverage
+      run: make test-coverage
 
     - name: Upload coverage reports
       uses: actions/upload-artifact@v4
@@ -79,13 +50,13 @@ jobs:
     - name: Test build
       run: |
         echo "🔨 Testing build..."
-        go build -v -ldflags="-s -w" -o athena-test ./cmd/athena
-        ./athena-test --help > /dev/null
+        make build
+        ./athena --help > /dev/null
         echo "✅ Build successful"
 
     - name: Check binary size
       run: |
-        BINARY_SIZE=$(stat -f%z athena-test 2>/dev/null || stat -c%s athena-test)
+        BINARY_SIZE=$(stat -f%z athena 2>/dev/null || stat -c%s athena)
         echo "📦 Binary size: $(numfmt --to=iec-i --suffix=B $BINARY_SIZE 2>/dev/null || echo $BINARY_SIZE bytes)"
         # Warn if binary exceeds 10MB (Cobra should add <5MB)
         if [ $BINARY_SIZE -gt 10485760 ]; then
@@ -115,8 +86,7 @@ jobs:
         cache: true
 
     - name: Build binary
-      run: |
-        go build -v -ldflags="-s -w" -o athena${{ matrix.os == 'windows-latest' && '.exe' || '' }} ./cmd/athena
+      run: make build
 
     - name: Test CLI commands (Unix)
       if: runner.os != 'Windows'
