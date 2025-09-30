@@ -1,0 +1,99 @@
+{
+  "product_vision": {
+    "purpose": "Zero-dependency Go proxy for translating Anthropic API requests to OpenRouter format",
+    "target_users": [
+      "Claude Code developers needing diverse AI models",
+      "Cost-conscious developers",
+      "Local development users",
+      "Enterprise teams requiring flexible model selection"
+    ],
+    "core_value": "Enable Claude Code to work with OpenRouter's diverse model selection while maintaining full API compatibility"
+  },
+  "existing_features": [
+    "Bidirectional API translation (Anthropic ↔ OpenAI)",
+    "Model name mapping and configuration",
+    "Tool/function calling translation",
+    "Streaming support with Server-Sent Events (SSE)",
+    "Error handling and transformation",
+    "Multi-source configuration (CLI flags → config files → env vars → defaults)",
+    "Health check endpoint",
+    "Multi-modal content support (text + images)"
+  ],
+  "architecture": {
+    "tech_stack": "Go standard library only (no external dependencies)",
+    "project_structure": "cmd/ and internal/ package layout",
+    "key_components": {
+      "transform": "internal/transform/transform.go - Core transformation logic",
+      "config": "internal/config/config.go - Configuration management",
+      "server": "HTTP server handling (to be implemented/enhanced)"
+    },
+    "design_principles": [
+      "Single-file component organization where practical",
+      "Standard library only",
+      "Configuration-driven behavior",
+      "Strict API compatibility",
+      "Comprehensive error handling"
+    ]
+  },
+  "code_patterns": {
+    "transformation": {
+      "pattern": "Bidirectional conversion functions",
+      "functions": [
+        "AnthropicToOpenAI() - Request transformation",
+        "OpenAIToAnthropic() - Response transformation",
+        "MapModel() - Model name mapping",
+        "HandleStreaming() - SSE event generation"
+      ],
+      "techniques": [
+        "json.RawMessage for flexible content handling",
+        "Recursive schema cleaning (removeUriFormat)",
+        "State tracking during streaming",
+        "Error-tolerant parsing"
+      ]
+    },
+    "configuration": {
+      "pattern": "Multi-source config loading with priority order",
+      "priority": "CLI flags > config files > env vars > defaults",
+      "search_paths": [
+        "~/.config/athena/athena.{yml,json}",
+        "./athena.{yml,json}",
+        "./.env"
+      ]
+    },
+    "error_handling": {
+      "pattern": "Validate input → transform → proxy → transform response → handle errors",
+      "approach": "Proper HTTP status codes with transformed error messages"
+    }
+  },
+  "relevant_code": {
+    "transform_package": {
+      "file": "internal/transform/transform.go",
+      "key_functions": [
+        "AnthropicToOpenAI - Converts Anthropic requests to OpenAI format",
+        "OpenAIToAnthropic - Converts OpenAI responses to Anthropic format",
+        "MapModel - Handles model name mapping",
+        "removeUriFormat - Cleans JSON schemas for OpenRouter compatibility",
+        "validateToolCalls - Ensures tool responses match tool calls"
+      ]
+    },
+    "config_package": {
+      "file": "internal/config/config.go",
+      "capabilities": "Multi-source configuration loading, model mapping configuration"
+    },
+    "streaming": {
+      "location": "internal/transform/transform.go - HandleStreaming function",
+      "features": [
+        "Line-by-line SSE processing",
+        "Event mapping (OpenAI delta → Anthropic content blocks)",
+        "State management (content block indices, tool call state)",
+        "Proper event sequence generation"
+      ]
+    }
+  },
+  "dependencies_and_conflicts": {
+    "dependencies": [],
+    "potential_conflicts": "None - this feature describes the existing implementation",
+    "alignment": "This spec documents what Athena already does - it's not a new feature but rather a comprehensive specification of the existing proxy functionality"
+  },
+  "implementation_status": "Production-ready - all core features are implemented and tested"
+}

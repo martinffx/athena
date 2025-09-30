@@ -8,15 +8,35 @@ import (
 	"strings"
 )
 
+// Default configuration values
+const (
+	DefaultModelName   = "moonshotai/kimi-k2-0905"
+	DefaultPort        = "11434"
+	DefaultBaseURL     = "https://openrouter.ai/api"
+	DefaultOpusModel   = "anthropic/claude-3-opus"
+	DefaultSonnetModel = "anthropic/claude-3.5-sonnet"
+	DefaultHaikuModel  = "anthropic/claude-3.5-haiku"
+)
+
+// ProviderConfig holds provider routing configuration
+type ProviderConfig struct {
+	Order          []string `json:"order"`
+	AllowFallbacks bool     `json:"allow_fallbacks"`
+}
+
 // Config holds the application configuration
 type Config struct {
-	Port        string `json:"port"`
-	APIKey      string `json:"api_key"`
-	BaseURL     string `json:"base_url"`
-	Model       string `json:"model"`
-	OpusModel   string `json:"opus_model"`
-	SonnetModel string `json:"sonnet_model"`
-	HaikuModel  string `json:"haiku_model"`
+	Port            string          `json:"port"`
+	APIKey          string          `json:"api_key"`
+	BaseURL         string          `json:"base_url"`
+	Model           string          `json:"model"`
+	OpusModel       string          `json:"opus_model"`
+	SonnetModel     string          `json:"sonnet_model"`
+	HaikuModel      string          `json:"haiku_model"`
+	DefaultProvider *ProviderConfig `json:"default_provider,omitempty"`
+	OpusProvider    *ProviderConfig `json:"opus_provider,omitempty"`
+	SonnetProvider  *ProviderConfig `json:"sonnet_provider,omitempty"`
+	HaikuProvider   *ProviderConfig `json:"haiku_provider,omitempty"`
 }
 
 // Load loads configuration from file and environment variables
@@ -27,13 +47,13 @@ func Load(configFile string) *Config {
 	loadEnvFile(".env")
 
 	// Set defaults from environment variables
-	cfg.Port = getEnvWithDefault("PORT", "11434")
+	cfg.Port = getEnvWithDefault("PORT", DefaultPort)
 	cfg.APIKey = getEnvWithDefault("OPENROUTER_API_KEY", "")
-	cfg.BaseURL = getEnvWithDefault("OPENROUTER_BASE_URL", "https://openrouter.ai/api")
-	cfg.Model = getEnvWithDefault("DEFAULT_MODEL", "google/gemini-2.0-flash-exp:free")
-	cfg.OpusModel = getEnvWithDefault("OPUS_MODEL", "anthropic/claude-3-opus")
-	cfg.SonnetModel = getEnvWithDefault("SONNET_MODEL", "anthropic/claude-3.5-sonnet")
-	cfg.HaikuModel = getEnvWithDefault("HAIKU_MODEL", "anthropic/claude-3.5-haiku")
+	cfg.BaseURL = getEnvWithDefault("OPENROUTER_BASE_URL", DefaultBaseURL)
+	cfg.Model = getEnvWithDefault("DEFAULT_MODEL", DefaultModelName)
+	cfg.OpusModel = getEnvWithDefault("OPUS_MODEL", DefaultOpusModel)
+	cfg.SonnetModel = getEnvWithDefault("SONNET_MODEL", DefaultSonnetModel)
+	cfg.HaikuModel = getEnvWithDefault("HAIKU_MODEL", DefaultHaikuModel)
 
 	// Load config file if specified
 	if configFile != "" {
@@ -55,6 +75,16 @@ func Load(configFile string) *Config {
 		}
 	}
 
+	// Set default provider for kimi-k2 models if not already configured
+	// This runs AFTER file loading so it checks the final model value
+	if cfg.DefaultProvider == nil && strings.Contains(cfg.Model, "kimi-k2") {
+		log.Printf("Auto-configuring Groq provider for kimi-k2 model")
+		cfg.DefaultProvider = &ProviderConfig{
+			Order:          []string{"Groq"},
+			AllowFallbacks: false,
+		}
+	}
+
 	return cfg
 }
 
@@ -68,6 +98,8 @@ func loadConfigFromFile(filename string, cfg *Config) {
 	var fileConfig Config
 
 	if strings.HasSuffix(filename, ".yml") || strings.HasSuffix(filename, ".yaml") {
+		// YAML format only supports basic config fields
+		// Provider routing requires JSON format
 		if err := parseYAML(data, &fileConfig); err != nil {
 			log.Printf("Warning: Could not parse YAML config file %s: %v", filename, err)
 			return
@@ -82,32 +114,29 @@ func loadConfigFromFile(filename string, cfg *Config) {
 	log.Printf("Loaded config from %s", filename)
 
 	// Override with config file values only if they're not empty
-	defaultPort := getEnvWithDefault("PORT", "11434")
-	if fileConfig.Port != "" && cfg.Port == defaultPort {
-		cfg.Port = fileConfig.Port
-	}
+	mergeStringField(&cfg.Port, fileConfig.Port, "PORT", DefaultPort)
+	mergeStringField(&cfg.BaseURL, fileConfig.BaseURL, "OPENROUTER_BASE_URL", DefaultBaseURL)
+	mergeStringField(&cfg.Model, fileConfig.Model, "DEFAULT_MODEL", DefaultModelName)
+	mergeStringField(&cfg.OpusModel, fileConfig.OpusModel, "OPUS_MODEL", DefaultOpusModel)
+	mergeStringField(&cfg.SonnetModel, fileConfig.SonnetModel, "SONNET_MODEL", DefaultSonnetModel)
+	mergeStringField(&cfg.HaikuModel, fileConfig.HaikuModel, "HAIKU_MODEL", DefaultHaikuModel)
+
+	// APIKey special case: only merge if current is empty
 	if fileConfig.APIKey != "" && cfg.APIKey == "" {
 		cfg.APIKey = fileConfig.APIKey
 	}
-	defaultBaseURL := getEnvWithDefault("OPENROUTER_BASE_URL", "https://openrouter.ai/api")
-	if fileConfig.BaseURL != "" && cfg.BaseURL == defaultBaseURL {
-		cfg.BaseURL = fileConfig.BaseURL
+	// Override provider configs if present in file
+	if fileConfig.DefaultProvider != nil {
+		cfg.DefaultProvider = fileConfig.DefaultProvider
 	}
-	defaultModel := getEnvWithDefault("DEFAULT_MODEL", "google/gemini-2.0-flash-exp:free")
-	if fileConfig.Model != "" && cfg.Model == defaultModel {
-		cfg.Model = fileConfig.Model
+	if fileConfig.OpusProvider != nil {
+		cfg.OpusProvider = fileConfig.OpusProvider
 	}
-	defaultOpus := getEnvWithDefault("OPUS_MODEL", "anthropic/claude-3-opus")
-	if fileConfig.OpusModel != "" && cfg.OpusModel == defaultOpus {
-		cfg.OpusModel = fileConfig.OpusModel
+	if fileConfig.SonnetProvider != nil {
+		cfg.SonnetProvider = fileConfig.SonnetProvider
 	}
-	defaultSonnet := getEnvWithDefault("SONNET_MODEL", "anthropic/claude-3.5-sonnet")
-	if fileConfig.SonnetModel != "" && cfg.SonnetModel == defaultSonnet {
-		cfg.SonnetModel = fileConfig.SonnetModel
-	}
-	defaultHaiku := getEnvWithDefault("HAIKU_MODEL", "anthropic/claude-3.5-haiku")
-	if fileConfig.HaikuModel != "" && cfg.HaikuModel == defaultHaiku {
-		cfg.HaikuModel = fileConfig.HaikuModel
+	if fileConfig.HaikuProvider != nil {
+		cfg.HaikuProvider = fileConfig.HaikuProvider
 	}
 }
 
@@ -116,6 +145,15 @@ func getEnvWithDefault(key, defaultValue string) string {
 		return value
 	}
 	return defaultValue
+}
+
+// mergeStringField merges a config field from file into current config
+// Only overwrites if file value is non-empty and current value equals env/default
+func mergeStringField(current *string, fileValue, envKey, defaultValue string) {
+	envOrDefault := getEnvWithDefault(envKey, defaultValue)
+	if fileValue != "" && *current == envOrDefault {
+		*current = fileValue
+	}
 }
 
 func parseYAML(data []byte, config *Config) error {

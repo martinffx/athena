@@ -2,7 +2,17 @@
 port: "11434"
 api_key: "your-openrouter-api-key-here"
 base_url: "https://openrouter.ai/api"
-model: "google/gemini-2.0-flash-exp:free"
+model: "moonshotai/kimi-k2-0905"
 opus_model: "anthropic/claude-3-opus"
 sonnet_model: "anthropic/claude-3.5-sonnet"
 haiku_model: "anthropic/claude-3.5-haiku"
+
+# Provider routing is configured automatically for kimi-k2 models via Groq
+# To customize provider routing, use JSON format:
+# {
+#   "model": "moonshotai/kimi-k2-0905",
+#   "default_provider": {
+#     "order": ["Groq"],
+#     "allow_fallbacks": false
+#   }
+# }

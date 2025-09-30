@@ -11,9 +11,10 @@ A proxy server that maps Anthropic's API format to OpenRouter, allowing you to u
 ## Features
 
 - 🔄 **API Translation**: Maps Anthropic API calls to OpenRouter format
-- 🌊 **Streaming Support**: Full SSE streaming for real-time responses  
+- 🌊 **Streaming Support**: Full SSE streaming for real-time responses
 - 🛠️ **Tool Calling**: Complete function/tool calling support
 - 🎯 **Model Mapping**: Configurable mappings for Opus, Sonnet, and Haiku models
+- 🔀 **Provider Routing**: Automatic Groq provider routing for Kimi K2 models
 - ⚙️ **Flexible Configuration**: CLI flags, config files, environment variables, and .env files
 - 🖥️ **Claude Code Integration**: Built-in launcher for seamless Claude Code TUI experience
 - 🚀 **Zero Dependencies**: Uses only Go standard library
@@ -44,11 +45,42 @@ The proxy looks for configuration in this priority order:
 port: "11434"
 api_key: "your-openrouter-api-key-here"
 base_url: "https://openrouter.ai/api"
-model: "google/gemini-2.0-flash-exp:free"
+model: "moonshotai/kimi-k2-0905"
 opus_model: "anthropic/claude-3-opus"
 sonnet_model: "anthropic/claude-3.5-sonnet"
 haiku_model: "anthropic/claude-3.5-haiku"
 ```
+
+**Note:** The default model `moonshotai/kimi-k2-0905` automatically uses Groq provider routing for optimal performance.
+
+### Advanced: Provider Routing (JSON Config)
+
+For fine-grained control over provider routing, use JSON format:
+
+```json
+{
+  "port": "11434",
+  "api_key": "your-openrouter-api-key-here",
+  "base_url": "https://openrouter.ai/api",
+  "model": "moonshotai/kimi-k2-0905",
+  "default_provider": {
+    "order": ["Groq"],
+    "allow_fallbacks": false
+  },
+  "opus_model": "anthropic/claude-3-opus",
+  "opus_provider": {
+    "order": ["Anthropic"],
+    "allow_fallbacks": true
+  },
+  "sonnet_model": "anthropic/claude-3.5-sonnet",
+  "haiku_model": "anthropic/claude-3.5-haiku"
+}
+```
+
+Provider routing allows you to:
+- Force requests through specific providers (e.g., Groq, Anthropic)
+- Control fallback behavior when the primary provider is unavailable
+- Configure different providers for different model tiers
 
 ### Environment Variables:
 ```bash
@@ -56,7 +88,7 @@ export OPENROUTER_API_KEY="your-key"
 export OPUS_MODEL="anthropic/claude-3-opus"
 export SONNET_MODEL="anthropic/claude-3.5-sonnet"
 export HAIKU_MODEL="anthropic/claude-3.5-haiku"
-export DEFAULT_MODEL="google/gemini-2.0-flash-exp:free"
+export DEFAULT_MODEL="moonshotai/kimi-k2-0905"
 export PORT="11434"
 ```
 

@@ -28,112 +28,138 @@ This document outlines the technical design for adding CLI subcommands to openro
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│                    main()                           │
-│                Command Dispatcher                    │
+│           cmd/athena/main.go (~20 lines)            │
+│              cli.Execute() entry point              │
+└─────────────────────────────────────────────────────┘
+                          │
+                          ▼
+┌─────────────────────────────────────────────────────┐
+│                 internal/cli/                       │
+│              Cobra Command Layer                    │
 ├─────────────────────────────────────────────────────┤
-│ ┌─────────────┐ ┌─────────────┐ ┌─────────────────┐ │
-│ │ CLI Router  │ │ Legacy Mode │ │ Daemon Commands │ │
-│ │ (cobra)     │ │ Detection   │ │   Manager       │ │
-│ └─────────────┘ └─────────────┘ └─────────────────┘ │
+│  root.go    │ Cobra root command + persistent flags │
+│  start.go   │ Start daemon command                  │
+│  stop.go    │ Stop daemon command                   │
+│  status.go  │ Status display command                │
+│  logs.go    │ Log streaming command                 │
+│  code.go    │ Claude Code integration command       │
+└─────────────────────────────────────────────────────┘
+                          │
+                          ▼
+┌─────────────────────────────────────────────────────┐
+│               internal/daemon/                      │
+│           Daemon Management Layer                   │
 ├─────────────────────────────────────────────────────┤
-│                Service Layer                        │
+│  daemon.go  │ Process lifecycle management          │
+│             │ - StartDaemon()                       │
+│             │ - StopDaemon()                        │
+│             │ - GetStatus()                         │
+│             │                                       │
+│  state.go   │ PID file and state management         │
+│             │ - SaveState()                         │
+│             │ - LoadState()                         │
+│             │ - CleanupFiles()                      │
+└─────────────────────────────────────────────────────┘
+                          │
+                          ▼
+┌─────────────────────────────────────────────────────┐
+│    Existing Packages (unchanged)                    │
 ├─────────────────────────────────────────────────────┤
-│ ┌───────────────┐ ┌─────────────┐ ┌─────────────────┐ │
-│ │ProcessManager │ │StateManager │ │ CommandRouter   │ │
-│ │- StartDaemon  │ │- SaveState  │ │- route()        │ │
-│ │- StopDaemon   │ │- LoadState  │ │- execute()      │ │
-│ │- GetStatus    │ │- CleanupFiles│ │- validate()     │ │
-│ └───────────────┘ └─────────────┘ └─────────────────┘ │
-├─────────────────────────────────────────────────────┤
-│                Domain Entities                      │
-├─────────────────────────────────────────────────────┤
-│ ┌─────────────────┐ ┌─────────────────────────────────┐ │
-│ │ ProcessEntity   │ │        StateEntity              │ │
-│ │- pid            │ │- pidFilePath                    │ │
-│ │- port           │ │- logFilePath                    │ │
-│ │- startTime      │ │- dataDir                        │ │
-│ │- configPath     │ │- ensureDataDir()                │ │
-│ │- isAlive()      │ │- lockPidFile()                  │ │
-│ │- toPidFile()    │ │- rotateLogs()                   │ │
-│ └─────────────────┘ └─────────────────────────────────┘ │
-├─────────────────────────────────────────────────────┤
-│              Existing HTTP Server                   │
-│            (unchanged architecture)                 │
+│  internal/config/   │ Configuration loading         │
+│  internal/server/   │ HTTP server creation          │
+│  internal/transform/│ Message transformation        │
+│  internal/util/     │ Foundation utilities          │
 └─────────────────────────────────────────────────────┘
 ```
 
 **Proposed Flow:**
-1. **Command Detection**: Determine if running in legacy mode or with subcommands
-2. **Routing**: Dispatch to appropriate command handler via cobra framework
-3. **Service Layer**: Handle process lifecycle, state management, and command execution
-4. **Domain Layer**: Manage entities and business logic
-5. **Integration**: Reuse existing HTTP server creation and configuration loading
+1. **CLI Entry**: cmd/athena/main.go calls cli.Execute() to start Cobra
+2. **Command Routing**: internal/cli/ routes to appropriate command handler
+3. **Daemon Management**: internal/daemon/ handles process lifecycle and state
+4. **Server Integration**: Reuse existing internal/config and internal/server packages
+5. **Backward Compatibility**: root.go default behavior preserves legacy mode
 
 ### Component Integration
 
 ```mermaid
 graph TD
-    A[CLI Entry Point] --> B{Legacy Mode?}
-    B -->|Yes| C[Direct Server Start]
-    B -->|No| D[Command Router]
-    
-    D --> E[start command]
-    D --> F[stop command]
-    D --> G[status command]
-    D --> H[logs command]
-    D --> I[code command]
-    
-    E --> J[ProcessManager]
+    A[cmd/athena/main.go] --> B[internal/cli/root.go]
+    B --> C{Command?}
+
+    C -->|No Args| D[Legacy: Direct Server]
+    C -->|start| E[internal/cli/start.go]
+    C -->|stop| F[internal/cli/stop.go]
+    C -->|status| G[internal/cli/status.go]
+    C -->|logs| H[internal/cli/logs.go]
+    C -->|code| I[internal/cli/code.go]
+
+    E --> J[internal/daemon/daemon.go]
     F --> J
     G --> J
-    
-    J --> K[StateManager]
-    K --> L[ProcessEntity]
-    K --> M[StateEntity]
-    
-    E --> N[HTTP Server Creation]
-    N --> O[Existing Proxy Logic]
-    
-    style C fill:#e1f5fe
+
+    J --> K[internal/daemon/state.go]
+    K --> L[PID/Log Files]
+
+    E --> M[internal/server/server.go]
+    D --> M
+    M --> N[Existing HTTP Proxy]
+
+    style D fill:#e1f5fe
+    style M fill:#e8f5e8
     style N fill:#e8f5e8
-    style O fill:#e8f5e8
 ```
 
 ## Technical Implementation
 
-### Domain Entities
+### Daemon Package Structure
 
-#### ProcessEntity
+#### internal/daemon/state.go
 
-**Purpose**: Represents a running daemon process with complete lifecycle management.
+**Purpose**: PID file and state management with cross-platform compatibility.
 
 ```go
-type ProcessEntity struct {
+package daemon
+
+import (
+    "encoding/json"
+    "os"
+    "path/filepath"
+    "time"
+)
+
+// ProcessState represents daemon process state stored in PID file
+type ProcessState struct {
     PID        int       `json:"pid"`
     Port       int       `json:"port"`
     StartTime  time.Time `json:"start_time"`
     ConfigPath string    `json:"config_path"`
 }
 
-// Core business methods
-func (p *ProcessEntity) IsAlive() bool {
-    // Platform-specific process existence check
-    // Unix: kill(pid, 0) == nil
-    // Windows: OpenProcess() success
+// SaveState writes process state to PID file atomically
+func SaveState(state *ProcessState) error {
+    // 1. Ensure data directory exists (~/.openrouter-cc/)
+    // 2. Create temporary file with exclusive lock
+    // 3. Write JSON with proper permissions (0600)
+    // 4. Atomic rename to PID file location
 }
 
-func (p *ProcessEntity) FromPidFile(path string) error {
-    // Atomic read with file locking
-    // JSON deserialization with validation
+// LoadState reads and validates process state from PID file
+func LoadState() (*ProcessState, error) {
+    // 1. Read PID file with file locking
+    // 2. Parse JSON and validate structure
+    // 3. Verify process still exists (IsProcessRunning)
+    // 4. Return validated state or error
 }
 
-func (p *ProcessEntity) ToPidFile(path string) error {
-    // Atomic write with exclusive locking
-    // JSON serialization with proper permissions
+// CleanupState removes PID file and cleans up state
+func CleanupState() error {
+    // 1. Remove PID file atomically
+    // 2. Rotate old log files if needed
+    // 3. Clean temporary files
 }
 
-func (p *ProcessEntity) Validate() error {
-    // Business rule validation:
+// ValidateState performs business rule validation
+func (s *ProcessState) Validate() error {
     // - PID > 0 and process exists
     // - Port in valid range (1024-65535)
     // - StartTime not in future
@@ -141,79 +167,64 @@ func (p *ProcessEntity) Validate() error {
 }
 ```
 
-**Validation Rules:**
-- PID must be positive and correspond to running process
-- Port must be valid and not already bound by different process
-- Start time must be reasonable (not future, not ancient)
-- Config path must exist and be readable
-
-#### StateEntity
-
-**Purpose**: Manages persistent state files and data directory structure.
-
-```go
-type StateEntity struct {
-    PidFilePath string `json:"pid_file_path"`
-    LogFilePath string `json:"log_file_path"`
-    DataDir     string `json:"data_dir"`
-}
-
-func (s *StateEntity) EnsureDataDir() error {
-    // Create ~/.openrouter-cc/ with proper permissions
-    // Platform-specific: 0755 on Unix, appropriate ACLs on Windows
-}
-
-func (s *StateEntity) LockPidFile() error {
-    // Acquire exclusive lock for atomic operations
-    // Unix: flock(LOCK_EX | LOCK_NB)
-    // Windows: File attributes with sharing restrictions
-}
-
-func (s *StateEntity) RotateLogs() error {
-    // Rotate when log exceeds 10MB
-    // Keep 3 historical files: .log, .log.1, .log.2
-    // Atomic rotation to prevent data loss
-}
-```
-
 **File Management Strategy:**
-- **Atomic Operations**: All state changes use temporary files + atomic rename
-- **Locking**: Exclusive locks prevent concurrent access
-- **Permissions**: Restrictive permissions for security (600 for sensitive files)
+- **Atomic Operations**: Use temporary files + atomic rename
+- **Locking**: Leverage internal/util/ LockFile() and UnlockFile()
+- **Permissions**: 0600 for PID files (owner read/write only)
+- **Location**: Uses internal/util/ GetDataDir(), GetPidFilePath(), GetLogFilePath()
 
-### Service Layer Design
-
-#### ProcessManager
+#### internal/daemon/daemon.go
 
 **Purpose**: Cross-platform daemon process lifecycle management.
 
 ```go
-type ProcessManager struct {
-    stateManager *StateManager
-    config       *Config
+package daemon
+
+import (
+    "fmt"
+    "os"
+    "os/exec"
+    "time"
+
+    "github.com/martinrichards/openrouter-cc/internal/config"
+    "github.com/martinrichards/openrouter-cc/internal/util"
+)
+
+// StartDaemon starts the proxy server as a background daemon
+func StartDaemon(cfg *config.Config) error {
+    // 1. Check if daemon already running (LoadState + IsProcessRunning)
+    // 2. Fork new process with os/exec
+    // 3. Configure process group and I/O redirection
+    // 4. Start process and save state
+    // 5. Return immediately (non-blocking)
 }
 
-func (pm *ProcessManager) StartDaemon(config *Config) error {
-    // 1. Validate no existing daemon on port
-    // 2. Create detached process with proper signal handling
-    // 3. Save process state to PID file
-    // 4. Return immediately (non-blocking)
-}
-
-func (pm *ProcessManager) StopDaemon() error {
-    // 1. Read PID from state file
+// StopDaemon gracefully stops the running daemon
+func StopDaemon(timeout time.Duration) error {
+    // 1. Load state from PID file
     // 2. Send graceful shutdown signal (SIGTERM/os.Interrupt)
-    // 3. Wait up to 30 seconds for clean exit
-    // 4. Force termination if necessary (SIGKILL)
-    // 5. Clean up state files
+    // 3. Wait for clean exit up to timeout
+    // 4. Force kill if timeout exceeded
+    // 5. Cleanup state files
 }
 
-func (pm *ProcessManager) GetStatus() ProcessStatus {
-    // Return comprehensive status:
-    // - Running/Stopped state
-    // - Process details (PID, uptime, memory usage)
-    // - Configuration summary
-    // - Health check results
+// GetStatus returns current daemon status
+func GetStatus() (*Status, error) {
+    // 1. Load state from PID file
+    // 2. Check if process running
+    // 3. Calculate uptime
+    // 4. Read memory usage from proc/task manager
+    // 5. Return Status struct
+}
+
+// Status represents daemon status information
+type Status struct {
+    Running    bool
+    PID        int
+    Port       int
+    Uptime     time.Duration
+    Memory     uint64
+    ConfigPath string
 }
 ```
 
@@ -223,38 +234,8 @@ func (pm *ProcessManager) GetStatus() ProcessStatus {
 |--------|------------|---------|
 | Process Creation | `os/exec` with `Setpgid` | `CREATE_NEW_PROCESS_GROUP` |
 | Signal Handling | SIGTERM → SIGKILL | os.Interrupt → TerminateProcess |
-| File Locking | `flock` syscall | File attributes with sharing mode |
-| Process Detection | `/proc` or `kill(pid, 0)` | `OpenProcess` + `GetExitCodeProcess` |
-
-#### StateManager
-
-**Purpose**: File-based persistence with cross-platform compatibility.
-
-```go
-type StateManager struct {
-    dataDir string
-}
-
-func (sm *StateManager) SaveProcessState(process *ProcessEntity) error {
-    // 1. Ensure data directory exists
-    // 2. Acquire exclusive lock on PID file
-    // 3. Write process data atomically
-    // 4. Set appropriate file permissions
-    // 5. Release lock
-}
-
-func (sm *StateManager) LoadProcessState() (*ProcessEntity, error) {
-    // 1. Read PID file with validation
-    // 2. Verify process still exists
-    // 3. Return validated entity or error
-}
-
-func (sm *StateManager) CleanupFiles() error {
-    // 1. Remove stale PID files
-    // 2. Rotate old log files
-    // 3. Clean temporary files
-}
-```
+| Process Detection | `util.IsProcessRunning()` | `util.IsProcessRunning()` |
+| I/O Redirection | Redirect to log files | Redirect to log files |
 
 **File Structure:**
 ```
@@ -358,47 +339,131 @@ Legacy Mode (backward compatible):
 
 ### Command Implementation
 
-#### Start Command
+#### Start Command (internal/cli/start.go)
+
 ```bash
-openrouter-cc start [--port 11434] [--config openrouter.yml] [--daemon]
+openrouter-cc start [--port 11434] [--config openrouter.yml]
 
 Options:
-  --port     Port to bind (default: 11434)
-  --config   Configuration file path
-  --daemon   Run as daemon (default: true)
+  --port     Port to bind (default: 11434, from persistent flags)
+  --config   Configuration file path (from persistent flags)
 ```
 
-**Implementation Logic:**
-1. Check for existing daemon on port
-2. Validate configuration
-3. Start daemon process in background  
-4. Save process state
-5. Verify daemon started successfully
-6. Display status and connection info
+**Implementation:**
+```go
+package cli
 
-#### Stop Command
+import (
+    "fmt"
+    "github.com/spf13/cobra"
+    "github.com/martinrichards/openrouter-cc/internal/config"
+    "github.com/martinrichards/openrouter-cc/internal/daemon"
+)
+
+var startCmd = &cobra.Command{
+    Use:   "start",
+    Short: "Start OpenRouter CC daemon",
+    RunE: func(cmd *cobra.Command, args []string) error {
+        // 1. Load configuration
+        cfg := config.Load(configFile)
+        applyFlagOverrides(cfg)
+
+        // 2. Start daemon
+        err := daemon.StartDaemon(cfg)
+        if err != nil {
+            return fmt.Errorf("failed to start daemon: %w", err)
+        }
+
+        // 3. Display status
+        fmt.Printf("✓ Daemon started on port %s\n", cfg.Port)
+        return nil
+    },
+}
+```
+
+#### Stop Command (internal/cli/stop.go)
+
 ```bash
-openrouter-cc stop [--timeout 30s] [--force]
+openrouter-cc stop [--timeout 30s]
 
 Options:
   --timeout  Graceful shutdown timeout (default: 30s)
-  --force    Force kill if graceful shutdown fails
 ```
 
-**Implementation Logic:**
-1. Read PID from state file
-2. Send graceful shutdown signal
-3. Wait for process to exit
-4. Clean up state files
-5. Confirm daemon stopped
+**Implementation:**
+```go
+package cli
 
-#### Status Command
+import (
+    "fmt"
+    "time"
+    "github.com/spf13/cobra"
+    "github.com/martinrichards/openrouter-cc/internal/daemon"
+)
+
+var stopCmd = &cobra.Command{
+    Use:   "stop",
+    Short: "Stop OpenRouter CC daemon",
+    RunE: func(cmd *cobra.Command, args []string) error {
+        timeout, _ := cmd.Flags().GetDuration("timeout")
+
+        err := daemon.StopDaemon(timeout)
+        if err != nil {
+            return fmt.Errorf("failed to stop daemon: %w", err)
+        }
+
+        fmt.Println("✓ Daemon stopped")
+        return nil
+    },
+}
+
+func init() {
+    stopCmd.Flags().Duration("timeout", 30*time.Second, "Graceful shutdown timeout")
+}
+```
+
+#### Status Command (internal/cli/status.go)
+
 ```bash
-openrouter-cc status [--json] [--verbose]
+openrouter-cc status [--json]
 
 Options:
   --json     Output status as JSON
-  --verbose  Show detailed information
+```
+
+**Implementation:**
+```go
+package cli
+
+import (
+    "encoding/json"
+    "fmt"
+    "github.com/spf13/cobra"
+    "github.com/martinrichards/openrouter-cc/internal/daemon"
+)
+
+var statusCmd = &cobra.Command{
+    Use:   "status",
+    Short: "Show OpenRouter CC daemon status",
+    RunE: func(cmd *cobra.Command, args []string) error {
+        status, err := daemon.GetStatus()
+        if err != nil {
+            return fmt.Errorf("failed to get status: %w", err)
+        }
+
+        asJSON, _ := cmd.Flags().GetBool("json")
+        if asJSON {
+            json.NewEncoder(os.Stdout).Encode(status)
+        } else {
+            printHumanStatus(status)
+        }
+        return nil
+    },
+}
+
+func init() {
+    statusCmd.Flags().Bool("json", false, "Output as JSON")
+}
 ```
 
 **Output Format:**
@@ -411,40 +476,60 @@ Port: 11434
 Uptime: 2h 15m 30s
 Config: /home/user/.config/openrouter-cc/openrouter.yml
 Memory: 45.2 MB
-Requests: 1,247 total, 12/min avg
 ```
 
-### Backward Compatibility Preservation
+### Backward Compatibility (internal/cli/root.go)
 
-**Detection Logic:**
+**Root Command with Legacy Mode:**
 ```go
-func isLegacyMode(args []string) bool {
-    // No subcommands provided
-    if len(args) == 0 {
-        return true
-    }
-    
-    // First argument is a flag (starts with -)
-    if strings.HasPrefix(args[0], "-") {
-        return true
-    }
-    
-    // First argument is not a known command
-    knownCommands := []string{"start", "stop", "status", "logs", "code"}
-    for _, cmd := range knownCommands {
-        if args[0] == cmd {
-            return false
-        }
-    }
-    
-    return true
+package cli
+
+import (
+    "github.com/spf13/cobra"
+    "github.com/martinrichards/openrouter-cc/internal/config"
+    "github.com/martinrichards/openrouter-cc/internal/server"
+)
+
+var (
+    configFile string
+    port       string
+    apiKey     string
+)
+
+var rootCmd = &cobra.Command{
+    Use:   "openrouter-cc",
+    Short: "OpenRouter CC - Anthropic to OpenRouter proxy",
+    // Default behavior: Start server in foreground (legacy mode)
+    RunE: func(cmd *cobra.Command, args []string) error {
+        // Load configuration
+        cfg := config.Load(configFile)
+        applyFlagOverrides(cfg)
+
+        // Start server directly (blocking, legacy mode)
+        srv := server.New(cfg)
+        return srv.Start()
+    },
+}
+
+func init() {
+    // Persistent flags available to all commands
+    rootCmd.PersistentFlags().StringVar(&configFile, "config", "", "Config file path")
+    rootCmd.PersistentFlags().StringVar(&port, "port", "", "Port to bind")
+    rootCmd.PersistentFlags().StringVar(&apiKey, "api-key", "", "OpenRouter API key")
+
+    // Add subcommands
+    rootCmd.AddCommand(startCmd, stopCmd, statusCmd, logsCmd, codeCmd)
+}
+
+func Execute() error {
+    return rootCmd.Execute()
 }
 ```
 
 **Legacy Mode Behavior:**
-- All existing flags continue to work exactly as before
-- Direct server startup with blocking execution
-- No daemon process or state file management
+- Running `openrouter-cc` with no subcommand starts server in foreground
+- All existing flags (`--port`, `--config`, `--api-key`) work identically
+- Direct server startup with blocking execution (no daemon)
 - Identical output and error handling
 
 ### User Interaction Patterns
@@ -573,167 +658,97 @@ func setResourceLimits() error {
 
 ## Implementation Phases
 
-### Phase 1: Core Infrastructure (Week 1)
+See `docs/specs/subcommands/implementation-plan-v2.md` for detailed tasks and acceptance criteria.
 
-**Domain Entities Setup:**
-- [ ] Implement `ProcessEntity` with validation methods
-- [ ] Implement `StateEntity` with file management
-- [ ] Create platform-specific process detection utilities
-- [ ] Add comprehensive unit tests for entities
+### Phase 1: Module Structure & Cobra Integration (6 hours)
 
-**Files Created:**
-- Add entity structs to `main.go` (keeping single-file architecture)
-- Implement cross-platform process utilities
-- Add file management utilities with proper error handling
+**Deliverable:** New packages created, Cobra integrated, backward compatibility preserved
 
-**Testing Strategy:**
-- Unit tests for all entity methods
-- Platform-specific tests for process detection
-- File operation tests with temporary directories
-- Validation tests with edge cases
+**Key Tasks:**
+- Create `internal/cli/` package with root.go
+- Create `internal/daemon/` package structure
+- Add Cobra dependency: `go get github.com/spf13/cobra@latest`
+- Implement root command with persistent flags
+- Update `cmd/athena/main.go` to call `cli.Execute()`
+- Ensure backward compatibility: `athena -port 9000` works unchanged
 
-### Phase 2: Service Layer (Week 2)
+**Testing:**
+- Unit tests for root command flag parsing
+- Integration test: existing usage patterns work unchanged
 
-**Process Management:**
-- [ ] Implement `ProcessManager` with cross-platform support
-- [ ] Implement `StateManager` with atomic file operations
-- [ ] Add graceful shutdown handling with timeouts
-- [ ] Create integration tests with actual process lifecycle
+### Phase 2: Daemon Package & Start Command (8 hours)
 
-**Service Implementation:**
-- Extract server creation logic to reusable function
-- Add daemon process spawning with proper signal handling  
-- Implement state persistence with file locking
-- Add log rotation and cleanup utilities
+**Deliverable:** Daemon process management with start command functional
 
-**Testing Strategy:**
-- Integration tests for daemon start/stop cycles
-- Stress tests for concurrent state access
-- Platform-specific tests for signal handling
-- Error recovery tests for corrupt state files
+**Key Tasks:**
+- Implement `internal/daemon/state.go` with ProcessState struct
+- Implement `internal/daemon/daemon.go` with StartDaemon()
+- Implement `internal/cli/start.go` command
+- Cross-platform process detachment and daemonization
+- PID file save/load with validation
 
-### Phase 3: CLI Integration (Week 3)
+**Testing:**
+- Unit tests for state persistence
+- Integration test: start command creates daemon
+- Test: multiple start attempts handled correctly
 
-**Command Framework:**
-- [ ] Integrate cobra framework for command routing
-- [ ] Implement all subcommands (start, stop, status, logs, code)
-- [ ] Add backward compatibility detection and routing
-- [ ] Create comprehensive CLI tests
+### Phase 3: Stop & Status Commands (5 hours)
 
-**CLI Commands:**
-```go
-// Add to main.go while maintaining single-file structure
-var rootCmd = &cobra.Command{
-    Use:   "openrouter-cc",
-    Short: "OpenRouter CC - Claude Code proxy server",
-    Run:   legacyModeHandler, // Default to legacy behavior
-}
+**Deliverable:** Process control and monitoring complete
 
-func init() {
-    rootCmd.AddCommand(startCmd, stopCmd, statusCmd, logsCmd, codeCmd)
-    // Configure flags for backward compatibility
-}
-```
+**Key Tasks:**
+- Implement `internal/cli/stop.go` with graceful shutdown
+- Implement `internal/cli/status.go` with status display
+- Add graceful shutdown to server package (SIGTERM/SIGINT handling)
+- PID file cleanup and state management
 
-**Testing Strategy:**
-- CLI integration tests for all commands
-- Backward compatibility tests with existing flag combinations
-- User interaction tests for confirmations and progress indicators
-- Error handling tests for edge cases
+**Testing:**
+- Unit tests for stop command logic
+- Unit tests for status output formatting
+- Integration test: full start → status → stop workflow
 
-### Phase 4: Testing & Polish (Week 4)
+### Phase 4: Logs Command (4 hours)
 
-**Comprehensive Testing:**
-- [ ] End-to-end workflow tests
-- [ ] Cross-platform compatibility validation
-- [ ] Performance benchmarking
-- [ ] Security audit of file operations
+**Deliverable:** Log management and streaming
 
-**Documentation & Polish:**
-- [ ] Update help text and error messages
-- [ ] Add colored output for better UX
-- [ ] Performance optimization based on benchmarks
-- [ ] Final security review
+**Key Tasks:**
+- Add file logging to daemon mode in internal/daemon/
+- Implement log rotation (10MB, keep 3 files)
+- Implement `internal/cli/logs.go` with streaming
 
-**Quality Assurance:**
-- Load testing with concurrent daemon operations
-- Chaos testing (process kills, disk full, permission errors)
-- User acceptance testing on all supported platforms
-- Memory leak detection and performance profiling
+**Testing:**
+- Unit tests for log rotation logic
+- Integration test: logs command displays output
+- Test: follow mode streams new entries
 
-### Testing Strategy
+### Phase 5: Code Command & Polish (4 hours)
 
-**Unit Testing Approach:**
-```go
-func TestProcessEntity_IsAlive(t *testing.T) {
-    tests := []struct {
-        name      string
-        pid       int
-        running   bool
-        expected  bool
-    }{
-        {"existing process", os.Getpid(), true, true},
-        {"non-existent process", 999999, false, false},
-        {"zero pid", 0, false, false},
-    }
-    
-    for _, tt := range tests {
-        t.Run(tt.name, func(t *testing.T) {
-            p := &ProcessEntity{PID: tt.pid}
-            assert.Equal(t, tt.expected, p.IsAlive())
-        })
-    }
-}
-```
+**Deliverable:** Claude Code integration and final testing
 
-**Integration Testing:**
-```go
-func TestDaemonLifecycle(t *testing.T) {
-    // Test complete start -> status -> stop cycle
-    manager := NewProcessManager(testConfig)
-    
-    // Start daemon
-    err := manager.StartDaemon(testConfig)
-    require.NoError(t, err)
-    
-    // Verify running
-    status := manager.GetStatus()
-    assert.Equal(t, StatusRunning, status.State)
-    
-    // Stop daemon
-    err = manager.StopDaemon()
-    require.NoError(t, err)
-    
-    // Verify stopped
-    status = manager.GetStatus()
-    assert.Equal(t, StatusStopped, status.State)
-}
-```
+**Key Tasks:**
+- Implement `internal/cli/code.go` with environment setup
+- Error handling polish across all commands
+- Documentation updates (README, help text)
 
-### Rollout Plan
+**Testing:**
+- Unit tests for environment setup
+- Integration test: code command launches successfully
+- Full end-to-end workflow test
 
-**Stage 1: Internal Testing (Week 5)**
-- Deploy to development environments
-- Test all platforms (Linux, macOS, Windows)
-- Performance baseline establishment
-- Bug fixes and optimization
+### Phase 6: Cross-Platform Testing & CI (3 hours)
 
-**Stage 2: Beta Release (Week 6)**
-- Release as beta version with feature flag
-- Gather user feedback on CLI experience
-- Monitor for stability issues
-- Document common usage patterns
+**Deliverable:** Verified cross-platform compatibility
 
-**Stage 3: General Availability (Week 7)**
-- Full release with complete documentation
-- Update installation instructions
-- Announce new daemon capabilities
-- Provide migration guide for existing users
+**Key Tasks:**
+- Test on Linux, macOS, Windows
+- Update CI/CD for Cobra dependency
+- Performance validation
+- Binary size check
 
-**Rollback Strategy:**
-- Maintain backward compatibility ensures zero-downtime rollback
-- Feature flags allow disabling subcommands if issues arise
-- Legacy mode remains fully functional as fallback
+**Testing:**
+- CI runs on all platforms
+- Performance benchmarks pass
+- Backward compatibility tests pass
 
 ## Success Metrics
 
@@ -761,4 +776,4 @@ func TestDaemonLifecycle(t *testing.T) {
 - [ ] Consistent output formatting across commands
 - [ ] Seamless transition from legacy to daemon mode
 
-This design provides a comprehensive roadmap for implementing CLI subcommands while maintaining the single-file architecture and ensuring full backward compatibility with existing usage patterns.
+This design provides a comprehensive roadmap for implementing CLI subcommands using proper Go package structure (internal/cli/ and internal/daemon/) with Cobra framework integration, while ensuring full backward compatibility with existing usage patterns.

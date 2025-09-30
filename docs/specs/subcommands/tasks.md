@@ -1,1254 +1,564 @@
-# CLI Subcommands Implementation Tasks
-
-This document provides detailed task-by-task implementation guidance for adding CLI subcommands to openrouter-cc using a simplified function-based approach with Go standard library only.
+# Implementation Tasks: CLI Subcommands
 
 ## Overview
 
-**Architecture Approach**: Function-based implementation within single main.go file
-**Dependencies**: Go standard library only (no Cobra, no external frameworks)
-**Testing**: TDD approach with comprehensive unit and integration tests
-**Compatibility**: 100% backward compatibility with existing CLI usage
+This document provides a detailed task breakdown for implementing CLI subcommands in openrouter-cc. The implementation follows Test-Driven Development (TDD) with the pattern: **Stub → Test → Implement → Refactor** for each component.
 
-## Phase 1: Foundation Functions (9 hours)
+The implementation is structured in 6 phases, introducing 2 new packages (`internal/cli/` and `internal/daemon/`) while maintaining full backward compatibility. Total estimated time: **30 hours**.
 
-### F001: Data Directory Management Functions (2 hours)
+## Phase 1: Module Structure & Cobra Integration
 
-**Purpose**: Create cross-platform functions to manage the `~/.openrouter-cc/` directory structure.
+**Estimated Time:** 6 hours
+**Deliverable:** New package structure, Cobra integrated, backward compatibility preserved
 
-**Implementation**:
+### Task 1.1: Create Package Structure
+**Files**:
+- `internal/cli/root.go`
+- `internal/daemon/daemon.go` (stub)
+- `internal/daemon/state.go` (stub)
 
-```go
-// Add to main.go after existing Config struct
-const DataDirName = ".openrouter-cc"
+**Status**: ⬜ Pending
 
-func getDataDir() (string, error) {
-    home, err := os.UserHomeDir()
-    if err != nil {
-        return "", fmt.Errorf("unable to determine home directory: %w", err)
-    }
-    return filepath.Join(home, DataDirName), nil
-}
+**Steps**:
+1. [ ] Create directory structure: `internal/cli/` and `internal/daemon/`
+2. [ ] Add Cobra dependency: `go get github.com/spf13/cobra@latest`
+3. [ ] Update `go.mod` and verify dependency resolution
 
-func ensureDataDir() error {
-    dataDir, err := getDataDir()
-    if err != nil {
-        return err
-    }
-    
-    return os.MkdirAll(dataDir, 0755)
-}
+**Acceptance Criteria**:
+- Directory structure created
+- Cobra v1.8.0+ added to go.mod
+- No compilation errors
 
-func getPidFilePath() (string, error) {
-    dataDir, err := getDataDir()
-    if err != nil {
-        return "", err
-    }
-    return filepath.Join(dataDir, "openrouter-cc.pid"), nil
-}
-
-func getLogFilePath() (string, error) {
-    dataDir, err := getDataDir()
-    if err != nil {
-        return "", err
-    }
-    return filepath.Join(dataDir, "openrouter-cc.log"), nil
-}
-```
-
-**Testing Requirements**:
-- Test directory creation with various home directory scenarios
-- Test permission handling across platforms
-- Test path resolution works correctly
-- Test error handling for permission denied cases
-
-**Dependencies**: None
+**Estimated Time:** 30 minutes
 
 ---
 
-### F002: Process Management Utility Functions (3 hours)
+### Task 1.2: Implement Root Command
+**File**: `internal/cli/root.go`
+**Test**: `internal/cli/root_test.go`
+**Status**: ⬜ Pending
 
-**Purpose**: Create cross-platform process detection and management utilities.
+**TDD Steps**:
+1. [ ] Write stub: RootCmd with persistent flags (port, config, api-key, base-url, model, opus-model, sonnet-model, haiku-model)
+2. [ ] Write tests:
+   - Test flag parsing matches current behavior
+   - Test default values align with existing config
+   - Test config file loading integration
+   - Test backward compatibility (no subcommand runs server)
+3. [ ] Implement: Complete root command with all persistent flags
+4. [ ] Refactor: Extract flag definitions for reusability
 
-**Implementation**:
+**Acceptance Criteria**:
+- RootCmd variable exported
+- All existing CLI flags defined as persistent flags
+- Default behavior (no subcommand) executes server in foreground
+- Flag precedence: CLI flags → config files → env vars → defaults
+- Tests verify backward compatibility
 
-```go
-import (
-    // Add platform-specific imports as needed
-    "os/exec"
-    "strconv"
-    "syscall"
-    "time"
-)
-
-func isProcessAlive(pid int) bool {
-    if pid <= 0 {
-        return false
-    }
-    
-    // Platform-specific implementation
-    if runtime.GOOS == "windows" {
-        return isProcessAliveWindows(pid)
-    }
-    return isProcessAliveUnix(pid)
-}
-
-func isProcessAliveUnix(pid int) bool {
-    process, err := os.FindProcess(pid)
-    if err != nil {
-        return false
-    }
-    err = process.Signal(syscall.Signal(0))
-    return err == nil
-}
-
-func isProcessAliveWindows(pid int) bool {
-    cmd := exec.Command("tasklist", "/FI", fmt.Sprintf("PID eq %d", pid))
-    err := cmd.Run()
-    return err == nil
-}
-
-func killProcess(pid int, graceful bool) error {
-    if !isProcessAlive(pid) {
-        return nil // Process already dead
-    }
-    
-    process, err := os.FindProcess(pid)
-    if err != nil {
-        return fmt.Errorf("failed to find process %d: %w", pid, err)
-    }
-    
-    if graceful {
-        // Send graceful termination signal
-        if runtime.GOOS == "windows" {
-            return process.Signal(os.Interrupt)
-        }
-        return process.Signal(syscall.SIGTERM)
-    }
-    
-    // Force kill
-    return process.Kill()
-}
-```
-
-**Testing Requirements**:
-- Test process detection with current process (should return true)
-- Test process detection with non-existent PID (should return false)
-- Test graceful vs forceful process termination
-- Test cross-platform compatibility
-
-**Dependencies**: None
+**Estimated Time:** 3 hours
 
 ---
 
-### F003: File Operations and Locking Functions (4 hours)
+### Task 1.3: Update Main Entry Point
+**File**: `cmd/athena/main.go`
+**Status**: ⬜ Pending
 
-**Purpose**: Create atomic file operations with proper locking for state management.
+**TDD Steps**:
+1. [ ] Write stub: main() calls cli.Execute()
+2. [ ] Write integration test: Binary runs with existing flag patterns
+3. [ ] Implement: Refactor main.go to use Cobra CLI
+4. [ ] Refactor: Simplify to ~20 lines
 
-**Implementation**:
+**Acceptance Criteria**:
+- main() calls cli.Execute()
+- `./athena` starts server in foreground (unchanged behavior)
+- `./athena -port 9000` works identically to current version
+- All existing integration tests pass
 
-```go
-import (
-    "encoding/json"
-    "os"
-    "path/filepath"
-    "sync"
-)
-
-// Simple file locking using mutex (can be enhanced with flock later)
-var fileLocks = make(map[string]*sync.Mutex)
-var fileLocksMutex sync.Mutex
-
-func lockFile(path string) (unlock func(), err error) {
-    fileLocksMutex.Lock()
-    if fileLocks[path] == nil {
-        fileLocks[path] = &sync.Mutex{}
-    }
-    mutex := fileLocks[path]
-    fileLocksMutex.Unlock()
-    
-    mutex.Lock()
-    return func() { mutex.Unlock() }, nil
-}
-
-func writeJSONFile(path string, data interface{}) error {
-    unlock, err := lockFile(path)
-    if err != nil {
-        return err
-    }
-    defer unlock()
-    
-    // Atomic write: write to temp file, then rename
-    dir := filepath.Dir(path)
-    tmpFile, err := os.CreateTemp(dir, "tmp-*.json")
-    if err != nil {
-        return fmt.Errorf("failed to create temp file: %w", err)
-    }
-    tmpPath := tmpFile.Name()
-    
-    defer func() {
-        tmpFile.Close()
-        os.Remove(tmpPath) // Clean up on error
-    }()
-    
-    encoder := json.NewEncoder(tmpFile)
-    encoder.SetIndent("", "  ")
-    if err := encoder.Encode(data); err != nil {
-        return fmt.Errorf("failed to encode JSON: %w", err)
-    }
-    
-    if err := tmpFile.Close(); err != nil {
-        return fmt.Errorf("failed to close temp file: %w", err)
-    }
-    
-    // Atomic rename
-    if err := os.Rename(tmpPath, path); err != nil {
-        return fmt.Errorf("failed to rename temp file: %w", err)
-    }
-    
-    return nil
-}
-
-func readJSONFile(path string, data interface{}) error {
-    unlock, err := lockFile(path)
-    if err != nil {
-        return err
-    }
-    defer unlock()
-    
-    file, err := os.Open(path)
-    if err != nil {
-        return fmt.Errorf("failed to open file: %w", err)
-    }
-    defer file.Close()
-    
-    decoder := json.NewDecoder(file)
-    if err := decoder.Decode(data); err != nil {
-        return fmt.Errorf("failed to decode JSON: %w", err)
-    }
-    
-    return nil
-}
-```
-
-**Testing Requirements**:
-- Test atomic writes don't leave partial files on error
-- Test concurrent file access is properly serialized
-- Test file locking prevents race conditions
-- Test error handling for corrupt JSON files
-
-**Dependencies**: F001 (for directory structure)
+**Estimated Time:** 2 hours
 
 ---
 
-## Phase 2: CLI Functions (9 hours)
+### Task 1.4: Backward Compatibility Testing
+**File**: `internal/cli/compatibility_test.go`
+**Status**: ⬜ Pending
 
-### C001: Command-line Argument Detection (2 hours)
+**TDD Steps**:
+1. [ ] Write integration tests:
+   - Test `./athena` starts server on default port
+   - Test `./athena -port 9000` starts server on port 9000
+   - Test `./athena -config athena.yml` loads config file
+   - Test combined flags: `./athena -port 9000 -api-key test`
+2. [ ] Verify all tests pass
+3. [ ] Document any edge cases discovered
 
-**Purpose**: Parse and validate CLI arguments without external dependencies.
+**Acceptance Criteria**:
+- All existing CLI usage patterns tested
+- 100% backward compatibility verified
+- Tests automated in CI pipeline
 
-**Implementation**:
-
-```go
-type CommandInfo struct {
-    Name  string
-    Args  []string
-    Flags map[string]string
-}
-
-var knownCommands = []string{"start", "stop", "status", "logs", "code"}
-
-func isLegacyMode(args []string) bool {
-    if len(args) == 0 {
-        return true // No arguments = legacy direct server mode
-    }
-    
-    // If first argument starts with -, it's a flag (legacy mode)
-    if strings.HasPrefix(args[0], "-") {
-        return true
-    }
-    
-    // Check if first argument is a known command
-    for _, cmd := range knownCommands {
-        if args[0] == cmd {
-            return false // New subcommand mode
-        }
-    }
-    
-    return true // Unknown first argument = legacy mode
-}
-
-func parseCommand(args []string) (CommandInfo, error) {
-    if len(args) == 0 {
-        return CommandInfo{}, fmt.Errorf("no command specified")
-    }
-    
-    cmd := CommandInfo{
-        Name:  args[0],
-        Args:  []string{},
-        Flags: make(map[string]string),
-    }
-    
-    // Simple flag parsing (enhance as needed)
-    for i := 1; i < len(args); i++ {
-        arg := args[i]
-        if strings.HasPrefix(arg, "--") {
-            // Long flag: --flag=value or --flag value
-            if strings.Contains(arg, "=") {
-                parts := strings.SplitN(arg, "=", 2)
-                cmd.Flags[strings.TrimPrefix(parts[0], "--")] = parts[1]
-            } else {
-                flagName := strings.TrimPrefix(arg, "--")
-                if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
-                    cmd.Flags[flagName] = args[i+1]
-                    i++ // Skip next arg
-                } else {
-                    cmd.Flags[flagName] = "true" // Boolean flag
-                }
-            }
-        } else if strings.HasPrefix(arg, "-") {
-            // Short flag: -f value or -f
-            flagName := strings.TrimPrefix(arg, "-")
-            if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
-                cmd.Flags[flagName] = args[i+1]
-                i++ // Skip next arg
-            } else {
-                cmd.Flags[flagName] = "true" // Boolean flag
-            }
-        } else {
-            cmd.Args = append(cmd.Args, arg)
-        }
-    }
-    
-    return cmd, nil
-}
-```
-
-**Testing Requirements**:
-- Test legacy mode detection with various argument patterns
-- Test command parsing handles flags correctly
-- Test help text generation works for all commands
-- Test error handling for invalid command combinations
-
-**Dependencies**: None
+**Estimated Time:** 30 minutes
 
 ---
 
-### C002: Command Handler Functions (5 hours)
+## Phase 2: Daemon Package & Start Command
 
-**Purpose**: Implement individual handler functions for each subcommand.
+**Estimated Time:** 8 hours
+**Deliverable:** Daemon process management with start command functional
 
-**Implementation**:
+### Task 2.1: Daemon State Management
+**File**: `internal/daemon/state.go`
+**Test**: `internal/daemon/state_test.go`
+**Status**: ⬜ Pending
 
-```go
-func handleStartCommand(args []string) error {
-    cmd, err := parseCommand(append([]string{"start"}, args...))
-    if err != nil {
-        return fmt.Errorf("failed to parse start command: %w", err)
-    }
-    
-    // Check if help requested
-    if _, ok := cmd.Flags["help"]; ok {
-        fmt.Println("Usage: openrouter-cc start [options]")
-        fmt.Println("  --port PORT     Port to bind (default: 11434)")
-        fmt.Println("  --config FILE   Configuration file path")
-        fmt.Println("  --help          Show this help")
-        return nil
-    }
-    
-    // Load configuration (reuse existing loadConfig logic)
-    // Check if daemon already running
-    // Start daemon process
-    // Save process state
-    // Report success
-    
-    fmt.Println("Starting OpenRouter CC daemon...")
-    return fmt.Errorf("start command not yet implemented")
-}
+**TDD Steps**:
+1. [ ] Write stub: ProcessState struct, SaveState/LoadState/CleanupState functions
+2. [ ] Write tests:
+   - Test SaveState creates PID file at `~/.openrouter-cc/openrouter-cc.pid`
+   - Test LoadState reads and validates state
+   - Test CleanupState removes PID file
+   - Test state validation checks process is alive
+   - Test concurrent access handling (file locking)
+3. [ ] Implement: Complete all functions with proper error handling
+4. [ ] Refactor: Extract path resolution, add platform-specific locking
 
-func handleStopCommand(args []string) error {
-    cmd, err := parseCommand(append([]string{"stop"}, args...))
-    if err != nil {
-        return fmt.Errorf("failed to parse stop command: %w", err)
-    }
-    
-    if _, ok := cmd.Flags["help"]; ok {
-        fmt.Println("Usage: openrouter-cc stop [options]")
-        fmt.Println("  --force         Force kill if graceful shutdown fails")
-        fmt.Println("  --timeout SEC   Graceful shutdown timeout (default: 30)")
-        fmt.Println("  --help          Show this help")
-        return nil
-    }
-    
-    fmt.Println("Stopping OpenRouter CC daemon...")
-    return fmt.Errorf("stop command not yet implemented")
-}
+**Acceptance Criteria**:
+- ProcessState struct with: PID (int), Port (int), StartTime (time.Time), ConfigPath (string)
+- SaveState() writes JSON atomically to `~/.openrouter-cc/openrouter-cc.pid`
+- LoadState() reads state and validates PID still running
+- CleanupState() safely removes PID file
+- File permissions set to 600 (owner read/write only)
+- Cross-platform file locking implemented
 
-func handleStatusCommand(args []string) error {
-    cmd, err := parseCommand(append([]string{"status"}, args...))
-    if err != nil {
-        return fmt.Errorf("failed to parse status command: %w", err)
-    }
-    
-    if _, ok := cmd.Flags["help"]; ok {
-        fmt.Println("Usage: openrouter-cc status [options]")
-        fmt.Println("  --json      Output status as JSON")
-        fmt.Println("  --verbose   Show detailed information")
-        fmt.Println("  --help      Show this help")
-        return nil
-    }
-    
-    fmt.Println("OpenRouter CC Status:")
-    return fmt.Errorf("status command not yet implemented")
-}
-
-func handleLogsCommand(args []string) error {
-    cmd, err := parseCommand(append([]string{"logs"}, args...))
-    if err != nil {
-        return fmt.Errorf("failed to parse logs command: %w", err)
-    }
-    
-    if _, ok := cmd.Flags["help"]; ok {
-        fmt.Println("Usage: openrouter-cc logs [options]")
-        fmt.Println("  -f, --follow    Follow log output")
-        fmt.Println("  --lines NUM     Number of lines to show (default: 50)")
-        fmt.Println("  --help          Show this help")
-        return nil
-    }
-    
-    fmt.Println("OpenRouter CC Logs:")
-    return fmt.Errorf("logs command not yet implemented")
-}
-
-func handleCodeCommand(args []string) error {
-    cmd, err := parseCommand(append([]string{"code"}, args...))
-    if err != nil {
-        return fmt.Errorf("failed to parse code command: %w", err)
-    }
-    
-    if _, ok := cmd.Flags["help"]; ok {
-        fmt.Println("Usage: openrouter-cc code [options]")
-        fmt.Println("Start daemon if needed and launch Claude Code")
-        fmt.Println("  --help          Show this help")
-        return nil
-    }
-    
-    fmt.Println("Starting daemon and launching Claude Code...")
-    return fmt.Errorf("code command not yet implemented")
-}
-```
-
-**Testing Requirements**:
-- Test each command handler with valid arguments
-- Test error handling for invalid arguments
-- Test help text is displayed correctly
-- Test command handlers provide appropriate user feedback
-
-**Dependencies**: C001 (for command parsing)
+**Estimated Time:** 3 hours
 
 ---
 
-### C003: Command Routing and Execution (2 hours)
+### Task 2.2: Daemon Process Management
+**File**: `internal/daemon/daemon.go`
+**Test**: `internal/daemon/daemon_test.go`
+**Status**: ⬜ Pending
 
-**Purpose**: Route commands to appropriate handlers and manage execution flow.
+**TDD Steps**:
+1. [ ] Write stub: Start(), Stop(), IsRunning() functions
+2. [ ] Write tests:
+   - Test Start() forks process and detaches
+   - Test Start() returns error if already running
+   - Test IsRunning() validates PID existence
+   - Test cross-platform process detachment
+3. [ ] Implement: Complete daemon lifecycle functions
+4. [ ] Refactor: Platform-specific implementations (Linux/macOS vs Windows)
 
-**Implementation**:
+**Acceptance Criteria**:
+- Start() forks current process and detaches from terminal
+- Process runs with log output redirected to file
+- IsRunning() checks PID validity
+- Cross-platform support (Linux/macOS/Windows)
+- Proper error handling for all failure modes
 
-```go
-func routeCommand(args []string) error {
-    if len(args) == 0 || isLegacyMode(args) {
-        // Run in legacy mode - use existing main() logic
-        return runLegacyMode(args)
-    }
-    
-    command := args[0]
-    commandArgs := args[1:]
-    
-    switch command {
-    case "start":
-        return handleStartCommand(commandArgs)
-    case "stop":
-        return handleStopCommand(commandArgs)
-    case "status":
-        return handleStatusCommand(commandArgs)
-    case "logs":
-        return handleLogsCommand(commandArgs)
-    case "code":
-        return handleCodeCommand(commandArgs)
-    case "help", "--help", "-h":
-        return displayHelp()
-    case "version", "--version", "-v":
-        return displayVersion()
-    default:
-        fmt.Fprintf(os.Stderr, "Unknown command: %s\n\n", command)
-        displayHelp()
-        return fmt.Errorf("unknown command: %s", command)
-    }
-}
-
-func displayHelp() error {
-    fmt.Println("OpenRouter CC - Claude Code proxy server")
-    fmt.Println()
-    fmt.Println("Usage:")
-    fmt.Println("  openrouter-cc [flags]              # Direct server mode (legacy)")
-    fmt.Println("  openrouter-cc <command> [options]  # Daemon mode")
-    fmt.Println()
-    fmt.Println("Commands:")
-    fmt.Println("  start    Start daemon process")
-    fmt.Println("  stop     Stop daemon process")
-    fmt.Println("  status   Show daemon status")
-    fmt.Println("  logs     Show/follow daemon logs")
-    fmt.Println("  code     Start daemon and launch Claude Code")
-    fmt.Println("  help     Show this help")
-    fmt.Println("  version  Show version information")
-    fmt.Println()
-    fmt.Println("Use 'openrouter-cc <command> --help' for command-specific help.")
-    return nil
-}
-
-func displayVersion() error {
-    fmt.Println("OpenRouter CC version: development")
-    return nil
-}
-
-func runLegacyMode(args []string) error {
-    // This will call the existing main() logic
-    // Implementation will be completed in integration phase
-    return fmt.Errorf("legacy mode not yet implemented")
-}
-```
-
-**Testing Requirements**:
-- Test command routing dispatches to correct handlers
-- Test unknown commands display helpful error messages
-- Test help and version commands work correctly
-- Test legacy mode routing preserves existing behavior
-
-**Dependencies**: C002 (for command handlers)
+**Estimated Time:** 3 hours
 
 ---
 
-## Phase 3: Daemon Functions (13 hours)
+### Task 2.3: Start Command
+**File**: `internal/cli/start.go`
+**Test**: `internal/cli/start_test.go`
+**Status**: ⬜ Pending
 
-### D001: Process State Management Functions (3 hours)
+**TDD Steps**:
+1. [ ] Write stub: startCmd with RunE function
+2. [ ] Write tests:
+   - Test start command checks if already running
+   - Test start command creates daemon process
+   - Test start command saves state file
+   - Test start command returns PID on success
+   - Test error handling when daemon already running
+3. [ ] Implement: Complete start command logic
+4. [ ] Refactor: Extract validation and startup logic
 
-**Purpose**: Manage daemon process state persistence and validation.
+**Acceptance Criteria**:
+- `openrouter-cc start` creates background daemon
+- Daemon PID printed to stdout
+- PID file created at `~/.openrouter-cc/openrouter-cc.pid`
+- Error if daemon already running on same port
+- All persistent flags (port, api-key, etc.) passed to daemon
+- Daemon starts successfully within 5 seconds
 
-**Implementation**:
-
-```go
-type ProcessState struct {
-    PID        int       `json:"pid"`
-    Port       int       `json:"port"`
-    StartTime  time.Time `json:"start_time"`
-    ConfigPath string    `json:"config_path,omitempty"`
-}
-
-func (p ProcessState) IsValid() bool {
-    if p.PID <= 0 || p.Port <= 0 {
-        return false
-    }
-    if p.StartTime.IsZero() || p.StartTime.After(time.Now()) {
-        return false
-    }
-    return isProcessAlive(p.PID)
-}
-
-func saveProcessState(state ProcessState) error {
-    pidPath, err := getPidFilePath()
-    if err != nil {
-        return fmt.Errorf("failed to get PID file path: %w", err)
-    }
-    
-    if err := ensureDataDir(); err != nil {
-        return fmt.Errorf("failed to ensure data directory: %w", err)
-    }
-    
-    return writeJSONFile(pidPath, state)
-}
-
-func loadProcessState() (ProcessState, error) {
-    var state ProcessState
-    
-    pidPath, err := getPidFilePath()
-    if err != nil {
-        return state, fmt.Errorf("failed to get PID file path: %w", err)
-    }
-    
-    if err := readJSONFile(pidPath, &state); err != nil {
-        if os.IsNotExist(err) {
-            return state, fmt.Errorf("no daemon process state found")
-        }
-        return state, fmt.Errorf("failed to read process state: %w", err)
-    }
-    
-    if !state.IsValid() {
-        // Clean up stale PID file
-        cleanupProcessState()
-        return state, fmt.Errorf("daemon process no longer running")
-    }
-    
-    return state, nil
-}
-
-func cleanupProcessState() error {
-    pidPath, err := getPidFilePath()
-    if err != nil {
-        return err
-    }
-    
-    if err := os.Remove(pidPath); err != nil && !os.IsNotExist(err) {
-        return fmt.Errorf("failed to remove PID file: %w", err)
-    }
-    
-    return nil
-}
-```
-
-**Testing Requirements**:
-- Test state save/load round-trip works correctly
-- Test state validation detects stale processes
-- Test cleanup removes only stale files
-- Test error handling for corrupt state files
-
-**Dependencies**: F003 (for file operations)
+**Estimated Time:** 2 hours
 
 ---
 
-### D002: Daemon Lifecycle Functions (6 hours)
+## Phase 3: Stop & Status Commands
 
-**Purpose**: Implement daemon process creation, monitoring, and termination.
+**Estimated Time:** 5 hours
+**Deliverable:** Process control and monitoring complete
 
-**Implementation**:
+### Task 3.1: Graceful Shutdown Support
+**File**: `internal/server/shutdown.go` (extend existing server package)
+**Test**: `internal/server/shutdown_test.go`
+**Status**: ⬜ Pending
 
-```go
-type DaemonStatus struct {
-    Running   bool      `json:"running"`
-    PID       int       `json:"pid,omitempty"`
-    Port      int       `json:"port,omitempty"`
-    Uptime    string    `json:"uptime,omitempty"`
-    StartTime time.Time `json:"start_time,omitempty"`
-}
+**TDD Steps**:
+1. [ ] Write stub: ListenForShutdown() function
+2. [ ] Write tests:
+   - Test server responds to SIGTERM signal
+   - Test server completes in-flight requests before stopping
+   - Test server closes within 30 second timeout
+   - Test server force-stops after timeout
+3. [ ] Implement: Signal handling and graceful HTTP server shutdown
+4. [ ] Refactor: Platform-specific signal handling (Unix vs Windows)
 
-func isDaemonRunning() bool {
-    state, err := loadProcessState()
-    return err == nil && state.IsValid()
-}
+**Acceptance Criteria**:
+- Server listens for SIGTERM and SIGINT signals
+- http.Server.Shutdown() called with 30s context timeout
+- In-flight requests complete before shutdown
+- Force shutdown after timeout
+- Cross-platform signal support
 
-func getDaemonStatus() (DaemonStatus, error) {
-    status := DaemonStatus{Running: false}
-    
-    state, err := loadProcessState()
-    if err != nil {
-        return status, nil // Daemon not running
-    }
-    
-    status.Running = true
-    status.PID = state.PID
-    status.Port = state.Port
-    status.StartTime = state.StartTime
-    status.Uptime = time.Since(state.StartTime).Round(time.Second).String()
-    
-    return status, nil
-}
-
-func startDaemon(config Config) error {
-    // Check if daemon already running
-    if isDaemonRunning() {
-        return fmt.Errorf("daemon is already running")
-    }
-    
-    // Validate port availability
-    if err := checkPortAvailable(config.Port); err != nil {
-        return fmt.Errorf("port %s not available: %w", config.Port, err)
-    }
-    
-    // Start daemon process
-    cmd := exec.Command(os.Args[0], "--daemon-mode")
-    
-    // Set up daemon process attributes
-    if err := setupDaemonProcess(cmd, config); err != nil {
-        return fmt.Errorf("failed to setup daemon process: %w", err)
-    }
-    
-    if err := cmd.Start(); err != nil {
-        return fmt.Errorf("failed to start daemon: %w", err)
-    }
-    
-    // Save process state
-    state := ProcessState{
-        PID:        cmd.Process.Pid,
-        Port:       parsePort(config.Port),
-        StartTime:  time.Now(),
-        ConfigPath: "", // Will be set by daemon process
-    }
-    
-    if err := saveProcessState(state); err != nil {
-        // Try to kill the process we just started
-        cmd.Process.Kill()
-        return fmt.Errorf("failed to save process state: %w", err)
-    }
-    
-    // Verify daemon started successfully
-    time.Sleep(100 * time.Millisecond) // Give it a moment
-    if !isDaemonRunning() {
-        return fmt.Errorf("daemon failed to start properly")
-    }
-    
-    fmt.Printf("✓ Daemon started (PID: %d) on port %s\n", state.PID, config.Port)
-    return nil
-}
-
-func stopDaemon(graceful bool) error {
-    state, err := loadProcessState()
-    if err != nil {
-        return fmt.Errorf("no running daemon found: %w", err)
-    }
-    
-    fmt.Printf("Stopping daemon (PID: %d)...\n", state.PID)
-    
-    // Try graceful shutdown first
-    if err := killProcess(state.PID, true); err != nil {
-        return fmt.Errorf("failed to send shutdown signal: %w", err)
-    }
-    
-    // Wait for graceful shutdown
-    timeout := 30 * time.Second
-    deadline := time.Now().Add(timeout)
-    
-    for time.Now().Before(deadline) {
-        if !isProcessAlive(state.PID) {
-            cleanupProcessState()
-            fmt.Println("✓ Daemon stopped gracefully")
-            return nil
-        }
-        time.Sleep(100 * time.Millisecond)
-    }
-    
-    // Force kill if graceful failed
-    if !graceful {
-        return fmt.Errorf("daemon did not stop gracefully within %s", timeout)
-    }
-    
-    fmt.Println("Graceful shutdown timeout, forcing termination...")
-    if err := killProcess(state.PID, false); err != nil {
-        return fmt.Errorf("failed to force kill daemon: %w", err)
-    }
-    
-    cleanupProcessState()
-    fmt.Println("✓ Daemon stopped forcefully")
-    return nil
-}
-
-func setupDaemonProcess(cmd *exec.Cmd, config Config) error {
-    // Set up logging
-    logPath, err := getLogFilePath()
-    if err != nil {
-        return err
-    }
-    
-    logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
-    if err != nil {
-        return fmt.Errorf("failed to open log file: %w", err)
-    }
-    
-    cmd.Stdout = logFile
-    cmd.Stderr = logFile
-    cmd.Stdin = nil
-    
-    // Platform-specific daemon setup
-    if runtime.GOOS != "windows" {
-        cmd.SysProcAttr = &syscall.SysProcAttr{
-            Setpgid: true,
-        }
-    }
-    
-    return nil
-}
-
-func checkPortAvailable(port string) error {
-    // Try to bind to the port temporarily
-    listener, err := net.Listen("tcp", ":"+port)
-    if err != nil {
-        return err
-    }
-    listener.Close()
-    return nil
-}
-
-func parsePort(portStr string) int {
-    port, err := strconv.Atoi(portStr)
-    if err != nil {
-        return 0
-    }
-    return port
-}
-```
-
-**Testing Requirements**:
-- Test daemon starts successfully and detaches properly
-- Test daemon stop with graceful and forceful modes
-- Test status reporting works for running and stopped daemons
-- Test multiple start attempts are handled correctly
-
-**Dependencies**: D001 (for state management), F002 (for process management)
+**Estimated Time:** 2 hours
 
 ---
 
-### D003: Logging and Output Management (4 hours)
+### Task 3.2: Stop Command
+**File**: `internal/cli/stop.go`
+**Test**: `internal/cli/stop_test.go`
+**Status**: ⬜ Pending
 
-**Purpose**: Implement logging functions for daemon mode with basic rotation.
+**TDD Steps**:
+1. [ ] Write stub: stopCmd with RunE function, --force flag
+2. [ ] Write tests:
+   - Test stop command reads PID from state file
+   - Test stop command sends SIGTERM to process
+   - Test stop command waits for graceful shutdown
+   - Test --force flag sends SIGKILL immediately
+   - Test error handling when daemon not running
+   - Test cleanup of PID file after stop
+3. [ ] Implement: Complete stop command logic
+4. [ ] Refactor: Extract process termination logic
 
-**Implementation**:
+**Acceptance Criteria**:
+- `openrouter-cc stop` sends SIGTERM to daemon
+- Waits up to 30 seconds for graceful shutdown
+- `--force` flag sends SIGKILL immediately
+- PID file removed after successful stop
+- Helpful error if daemon not running
+- Cross-platform signal support
 
-```go
-func setupDaemonLogging(logPath string) error {
-    // Ensure log directory exists
-    if err := os.MkdirAll(filepath.Dir(logPath), 0755); err != nil {
-        return fmt.Errorf("failed to create log directory: %w", err)
-    }
-    
-    // Check if log rotation is needed
-    if shouldRotateLogs(logPath) {
-        if err := rotateLogs(logPath); err != nil {
-            return fmt.Errorf("failed to rotate logs: %w", err)
-        }
-    }
-    
-    return nil
-}
-
-func shouldRotateLogs(logPath string) bool {
-    info, err := os.Stat(logPath)
-    if err != nil {
-        return false // File doesn't exist or can't be accessed
-    }
-    
-    const maxLogSize = 10 * 1024 * 1024 // 10MB
-    return info.Size() > maxLogSize
-}
-
-func rotateLogs(logPath string) error {
-    const maxBackups = 3
-    
-    // Rotate existing backups: .log.2 -> .log.3, .log.1 -> .log.2, etc.
-    for i := maxBackups; i > 1; i-- {
-        oldPath := fmt.Sprintf("%s.%d", logPath, i-1)
-        newPath := fmt.Sprintf("%s.%d", logPath, i)
-        
-        if _, err := os.Stat(oldPath); err == nil {
-            if err := os.Rename(oldPath, newPath); err != nil {
-                return fmt.Errorf("failed to rotate %s to %s: %w", oldPath, newPath, err)
-            }
-        }
-    }
-    
-    // Move current log to .1
-    backupPath := logPath + ".1"
-    if err := os.Rename(logPath, backupPath); err != nil {
-        return fmt.Errorf("failed to backup current log: %w", err)
-    }
-    
-    return nil
-}
-
-func followLogFile(logPath string, follow bool) error {
-    file, err := os.Open(logPath)
-    if err != nil {
-        if os.IsNotExist(err) {
-            fmt.Println("No log file found")
-            return nil
-        }
-        return fmt.Errorf("failed to open log file: %w", err)
-    }
-    defer file.Close()
-    
-    if !follow {
-        // Just dump the file and exit
-        _, err := io.Copy(os.Stdout, file)
-        return err
-    }
-    
-    // Follow mode - read existing content first
-    if _, err := io.Copy(os.Stdout, file); err != nil {
-        return fmt.Errorf("failed to read log file: %w", err)
-    }
-    
-    // Then watch for new content (simple polling approach)
-    for {
-        time.Sleep(100 * time.Millisecond)
-        
-        // Check if file still exists (in case it was rotated)
-        if _, err := os.Stat(logPath); err != nil {
-            // Try to reopen the file
-            file.Close()
-            file, err = os.Open(logPath)
-            if err != nil {
-                continue
-            }
-        }
-        
-        // Read any new content
-        if _, err := io.Copy(os.Stdout, file); err != nil {
-            break
-        }
-    }
-    
-    return nil
-}
-```
-
-**Testing Requirements**:
-- Test log rotation works at size threshold
-- Test log following works correctly
-- Test log cleanup maintains retention policy
-- Test concurrent log writes don't corrupt files
-
-**Dependencies**: D002 (for daemon lifecycle)
+**Estimated Time:** 2 hours
 
 ---
 
-## Phase 4: Integration (13 hours)
+### Task 3.3: Status Command
+**File**: `internal/cli/status.go`
+**Test**: `internal/cli/status_test.go`
+**Status**: ⬜ Pending
 
-### I001: Server Function Extraction (3 hours)
+**TDD Steps**:
+1. [ ] Write stub: statusCmd with RunE function, --json flag
+2. [ ] Write tests:
+   - Test status command reads state file
+   - Test status shows "running" when daemon alive
+   - Test status shows "stopped" when daemon not running
+   - Test status displays: PID, port, uptime, start time
+   - Test --json flag outputs machine-readable format
+   - Test error handling for corrupted state file
+3. [ ] Implement: Complete status display logic
+4. [ ] Refactor: Extract formatting logic (text vs JSON)
 
-**Purpose**: Extract server creation logic from main() for reuse in daemon mode.
+**Acceptance Criteria**:
+- `openrouter-cc status` shows running/stopped status
+- Displays: PID, port, bind address, uptime, start time
+- Human-readable output by default
+- `--json` flag outputs structured JSON
+- Validates PID still exists and is openrouter-cc process
+- Returns exit code 0 if running, 1 if stopped
 
-**Implementation**:
-
-```go
-func createHTTPServer(config Config) (*http.Server, error) {
-    // Extract existing server creation logic from main()
-    mux := http.NewServeMux()
-    
-    // Add existing handlers (extract from main)
-    mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-        w.Header().Set("Content-Type", "application/json")
-        fmt.Fprintf(w, `{"status": "ok", "version": "dev"}`)
-    })
-    
-    mux.HandleFunc("/v1/messages", handleMessages) // Extract from main
-    // ... add other handlers
-    
-    server := &http.Server{
-        Addr:    ":" + config.Port,
-        Handler: mux,
-    }
-    
-    return server, nil
-}
-
-func startHTTPServer(server *http.Server) error {
-    log.Printf("Starting server on %s", server.Addr)
-    return server.ListenAndServe()
-}
-
-func stopHTTPServer(server *http.Server) error {
-    ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-    defer cancel()
-    return server.Shutdown(ctx)
-}
-
-// Extract from existing main() function
-func handleMessages(w http.ResponseWriter, r *http.Request) {
-    // Move existing /v1/messages handler logic here
-    // This preserves all existing proxy functionality
-}
-```
-
-**Testing Requirements**:
-- Test extracted server functions work identically to original
-- Test server functions work in both daemon and direct modes
-- Test graceful shutdown works correctly
-- Test no regression in proxy functionality
-
-**Dependencies**: D003 (daemon logging)
+**Estimated Time:** 1 hour
 
 ---
 
-### I002: Configuration Enhancement (2 hours)
+## Phase 4: Logs Command
 
-**Purpose**: Enhance configuration system for daemon-specific settings.
+**Estimated Time:** 4 hours
+**Deliverable:** Log management and streaming
 
-**Implementation**:
+### Task 4.1: File Logging Support
+**File**: `internal/daemon/logging.go`
+**Test**: `internal/daemon/logging_test.go`
+**Status**: ⬜ Pending
 
-```go
-// Extend existing Config struct
-type Config struct {
-    // Existing fields
-    Port        string `json:"port"`
-    APIKey      string `json:"api_key"`
-    BaseURL     string `json:"base_url"`
-    Model       string `json:"model"`
-    OpusModel   string `json:"opus_model"`
-    SonnetModel string `json:"sonnet_model"`
-    HaikuModel  string `json:"haiku_model"`
-    
-    // New daemon-specific fields
-    DaemonMode  bool   `json:"-"` // Runtime flag, not persisted
-    LogLevel    string `json:"log_level,omitempty"`
-}
+**TDD Steps**:
+1. [ ] Write stub: SetupFileLogging(), RotateLogs() functions
+2. [ ] Write tests:
+   - Test log output redirected to file in daemon mode
+   - Test log rotation at 10MB size
+   - Test rotation keeps last 3 log files
+   - Test file permissions set to 600
+   - Test concurrent write safety
+3. [ ] Implement: File logging with rotation
+4. [ ] Refactor: Extract rotation policy logic
 
-func loadConfigForDaemon() (Config, error) {
-    // Use existing loadConfig logic but add daemon-specific validation
-    config := loadConfig() // Use existing function
-    
-    // Set daemon-specific defaults
-    if config.LogLevel == "" {
-        config.LogLevel = "info"
-    }
-    
-    return config, nil
-}
+**Acceptance Criteria**:
+- Logs written to `~/.openrouter-cc/openrouter-cc.log` in daemon mode
+- Stdout logging in foreground mode (backward compatible)
+- Automatic rotation at 10MB
+- Keeps athena.log, athena.log.1, athena.log.2
+- Thread-safe logging
+- File permissions: 600 (owner read/write only)
 
-func displayConfigStatus(config Config) {
-    fmt.Printf("Configuration:\n")
-    fmt.Printf("  Port: %s\n", config.Port)
-    fmt.Printf("  Base URL: %s\n", config.BaseURL)
-    fmt.Printf("  Default Model: %s\n", config.Model)
-    if config.LogLevel != "" {
-        fmt.Printf("  Log Level: %s\n", config.LogLevel)
-    }
-}
-```
-
-**Testing Requirements**:
-- Test enhanced config preserves all existing functionality
-- Test daemon-specific configuration works correctly
-- Test config validation catches invalid settings
-- Test config file discovery works across platforms
-
-**Dependencies**: I001 (server extraction)
+**Estimated Time:** 2 hours
 
 ---
 
-### I003: Main Function Refactoring (3 hours)
+### Task 4.2: Logs Command
+**File**: `internal/cli/logs.go`
+**Test**: `internal/cli/logs_test.go`
+**Status**: ⬜ Pending
 
-**Purpose**: Refactor main() to serve as command dispatcher while preserving backward compatibility.
+**TDD Steps**:
+1. [ ] Write stub: logsCmd with RunE function, --lines and --follow flags
+2. [ ] Write tests:
+   - Test logs command displays last N lines (default 50)
+   - Test --lines flag controls line count
+   - Test --follow flag streams new log entries
+   - Test handles log rotation gracefully
+   - Test exits cleanly on Ctrl+C (SIGINT)
+   - Test error handling when log file doesn't exist
+3. [ ] Implement: Complete log display and streaming
+4. [ ] Refactor: Extract tailing logic, handle file rotation
 
-**Implementation**:
+**Acceptance Criteria**:
+- `openrouter-cc logs` displays last 50 lines by default
+- `--lines N` displays last N lines
+- `--follow` streams new entries in real-time
+- Handles log rotation without interruption
+- Clean exit on Ctrl+C
+- Helpful error if daemon not running or no logs exist
 
-```go
-func main() {
-    args := os.Args[1:]
-    
-    // Check for special daemon mode flag (internal use)
-    if len(args) > 0 && args[0] == "--daemon-mode" {
-        if err := runDaemonMode(); err != nil {
-            log.Fatalf("Daemon mode failed: %v", err)
-        }
-        return
-    }
-    
-    // Route to appropriate handler
-    if err := routeCommand(args); err != nil {
-        if strings.Contains(err.Error(), "not yet implemented") {
-            fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-            os.Exit(1)
-        }
-        // For other errors, just log and exit
-        log.Fatalf("Command failed: %v", err)
-    }
-}
-
-func runDaemonMode() error {
-    // This runs the actual daemon process (started by startDaemon)
-    config, err := loadConfigForDaemon()
-    if err != nil {
-        return fmt.Errorf("failed to load daemon config: %w", err)
-    }
-    
-    // Set up daemon logging
-    logPath, err := getLogFilePath()
-    if err != nil {
-        return fmt.Errorf("failed to get log path: %w", err)
-    }
-    
-    if err := setupDaemonLogging(logPath); err != nil {
-        return fmt.Errorf("failed to setup logging: %w", err)
-    }
-    
-    // Create and start HTTP server
-    server, err := createHTTPServer(config)
-    if err != nil {
-        return fmt.Errorf("failed to create server: %w", err)
-    }
-    
-    // Set up signal handling for graceful shutdown
-    sigChan := make(chan os.Signal, 1)
-    signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
-    
-    go func() {
-        <-sigChan
-        log.Println("Received shutdown signal, stopping server...")
-        if err := stopHTTPServer(server); err != nil {
-            log.Printf("Error stopping server: %v", err)
-        }
-    }()
-    
-    // Start server (this blocks until shutdown)
-    log.Printf("Daemon starting on port %s", config.Port)
-    if err := startHTTPServer(server); err != nil && err != http.ErrServerClosed {
-        return fmt.Errorf("server failed: %w", err)
-    }
-    
-    log.Println("Daemon stopped")
-    return nil
-}
-
-func runLegacyMode(args []string) error {
-    // Preserve original main() behavior exactly
-    // Parse flags using existing flag parsing logic
-    // Load config using existing loadConfig()
-    // Create and start server directly (blocking)
-    
-    // For now, call existing logic (to be extracted)
-    return runOriginalMain(args)
-}
-
-func runOriginalMain(args []string) error {
-    // Move current main() logic here
-    // This preserves 100% backward compatibility
-    return fmt.Errorf("legacy mode extraction not yet implemented")
-}
-```
-
-**Testing Requirements**:
-- Test main() routes commands to correct handlers
-- Test legacy mode works exactly as before refactoring
-- Test daemon mode starts and stops correctly
-- Test error handling and exit codes are appropriate
-
-**Dependencies**: I002 (configuration), C003 (command routing)
+**Estimated Time:** 2 hours
 
 ---
 
-### T001: End-to-End Testing (5 hours)
+## Phase 5: Code Command & Polish
 
-**Purpose**: Create comprehensive integration tests for complete workflows.
+**Estimated Time:** 4 hours
+**Deliverable:** Claude Code integration and final testing
 
-**Implementation**:
+### Task 5.1: Code Command
+**File**: `internal/cli/code.go`
+**Test**: `internal/cli/code_test.go`
+**Status**: ⬜ Pending
 
-```go
-// Add to main_test.go
-func TestDaemonLifecycle(t *testing.T) {
-    // Test complete start -> status -> stop workflow
-    tests := []struct {
-        name string
-        steps []string
-        expectSuccess bool
-    }{
-        {
-            name: "basic lifecycle",
-            steps: []string{"start", "status", "stop"},
-            expectSuccess: true,
-        },
-        {
-            name: "double start should fail", 
-            steps: []string{"start", "start"},
-            expectSuccess: false,
-        },
-        {
-            name: "stop without start should fail",
-            steps: []string{"stop"},
-            expectSuccess: false,
-        },
-    }
-    
-    for _, tt := range tests {
-        t.Run(tt.name, func(t *testing.T) {
-            // Set up clean test environment
-            setupTestEnv(t)
-            defer cleanupTestEnv(t)
-            
-            var lastErr error
-            for _, step := range tt.steps {
-                lastErr = runTestCommand(step)
-                if lastErr != nil && tt.expectSuccess {
-                    t.Fatalf("Step %s failed: %v", step, lastErr)
-                }
-            }
-            
-            if tt.expectSuccess && lastErr != nil {
-                t.Fatalf("Expected success but got error: %v", lastErr)
-            }
-        })
-    }
-}
+**TDD Steps**:
+1. [ ] Write stub: codeCmd with RunE function
+2. [ ] Write tests:
+   - Test code command checks daemon is running
+   - Test environment variables set correctly
+   - Test claude process spawned with inherited environment
+   - Test exit code passed through from claude
+   - Test error handling when daemon not running
+   - Test error handling when claude not in PATH
+3. [ ] Implement: Complete Claude Code integration
+4. [ ] Refactor: Extract environment setup and process execution
 
-func TestBackwardCompatibility(t *testing.T) {
-    // Test existing flag combinations work exactly as before
-    legacyTests := [][]string{
-        {},                                    // No args
-        {"-port", "9000"},                    // Port flag
-        {"-api-key", "test"},                 // API key flag
-        {"-port", "9000", "-api-key", "test"}, // Multiple flags
-    }
-    
-    for _, args := range legacyTests {
-        t.Run(fmt.Sprintf("legacy_%v", args), func(t *testing.T) {
-            // Test that legacy mode detection works
-            assert.True(t, isLegacyMode(args))
-            
-            // Test that routing goes to legacy handler
-            // (Implementation will be completed as functions are built)
-        })
-    }
-}
+**Acceptance Criteria**:
+- `openrouter-cc code` checks daemon status first
+- Sets `ANTHROPIC_API_KEY=dummy`
+- Sets `ANTHROPIC_BASE_URL=http://localhost:{port}/v1`
+- Executes `claude` command with inherited environment
+- Returns claude's exit code
+- Helpful error if daemon not running
+- Helpful error if claude not found in PATH
+- Daemon continues running after claude exits
 
-func setupTestEnv(t *testing.T) {
-    // Create temporary data directory for testing
-    // Set environment variables to point to test directories
-}
-
-func cleanupTestEnv(t *testing.T) {
-    // Clean up temporary files and processes
-    // Ensure no test processes are left running
-}
-
-func runTestCommand(command string) error {
-    // Helper to run commands in test environment
-    return fmt.Errorf("test command execution not yet implemented")
-}
-```
-
-**Testing Requirements**:
-- Test all command workflows work end-to-end
-- Test 100% backward compatibility with existing usage
-- Test error scenarios provide helpful messages
-- Test cross-platform compatibility
-
-**Dependencies**: I003 (main refactoring)
+**Estimated Time:** 2 hours
 
 ---
 
-## Implementation Notes
+### Task 5.2: Error Handling Polish
+**Files**: All command files
+**Status**: ⬜ Pending
 
-### Key Principles
+**Steps**:
+1. [ ] Review all error messages for clarity
+2. [ ] Add helpful suggestions for common failure modes:
+   - "Daemon not running. Run 'openrouter-cc start' first."
+   - "Port already in use. Check if another instance is running."
+   - "Claude not found. Install Claude Code or add to PATH."
+3. [ ] Ensure consistent error formatting across commands
+4. [ ] Add debug output with --verbose flag
 
-1. **Single File Architecture**: All code remains in main.go with clear organization
-2. **No External Dependencies**: Use only Go standard library
-3. **Backward Compatibility**: Existing usage must work exactly as before
-4. **Function-Based Design**: Simple functions instead of complex entity/service layers
-5. **TDD Approach**: Write tests first, then implementation
+**Acceptance Criteria**:
+- All error messages are clear and actionable
+- Suggestions provided for common errors
+- Consistent error formatting
+- --verbose flag shows detailed debugging information
 
-### Testing Strategy
+**Estimated Time:** 1 hour
 
-- **Unit Tests**: Test individual functions in isolation
-- **Integration Tests**: Test command workflows end-to-end  
-- **Compatibility Tests**: Verify legacy mode works exactly as before
-- **Cross-Platform Tests**: Ensure functionality works on Linux, macOS, Windows
+---
 
-### Risk Mitigation
+### Task 5.3: Documentation Updates
+**Files**: `README.md`, `CLAUDE.md`
+**Status**: ⬜ Pending
 
-- **Incremental Development**: Implement phase by phase with testing
-- **Feature Flags**: Use internal flags to enable/disable new functionality during development
-- **Rollback Plan**: Legacy mode ensures instant rollback capability
-- **Extensive Testing**: Comprehensive test coverage before deployment
+**Steps**:
+1. [ ] Update README.md with subcommand examples:
+   - Getting started with daemon mode
+   - All five subcommands with usage examples
+   - Claude Code integration workflow
+2. [ ] Add troubleshooting section:
+   - Daemon won't start (port in use, permissions)
+   - Stop command hangs (force flag usage)
+   - Logs command shows nothing (daemon not started in background)
+3. [ ] Update CLAUDE.md development commands:
+   - Add subcommand testing instructions
+   - Update architecture diagrams
 
-### Success Metrics
+**Acceptance Criteria**:
+- README.md includes comprehensive subcommand documentation
+- Troubleshooting section covers common issues
+- CLAUDE.md reflects new architecture
+- Examples tested and verified
 
-- All existing CLI usage patterns work identically to current version
-- New subcommands provide intuitive daemon management
-- Command response times under 100ms
-- Daemon startup under 2 seconds
-- Zero regressions in HTTP proxy functionality
+**Estimated Time:** 1 hour
+
+---
+
+## Phase 6: Cross-Platform Testing & CI
+
+**Estimated Time:** 3 hours
+**Deliverable:** Verified cross-platform compatibility
+
+### Task 6.1: Cross-Platform Manual Testing
+**Status**: ⬜ Pending
+
+**Steps**:
+1. [ ] Test on Linux (Ubuntu 22.04):
+   - All subcommands functional
+   - Process management works correctly
+   - Signal handling (SIGTERM/SIGINT)
+   - File paths resolve correctly
+2. [ ] Test on macOS (latest):
+   - All subcommands functional
+   - Process management works correctly
+   - Signal handling
+   - File paths resolve correctly
+3. [ ] Test on Windows (Windows 11):
+   - All subcommands functional
+   - Process management with CREATE_NEW_PROCESS_GROUP
+   - Signal handling (os.Interrupt)
+   - File paths with backslashes and home directory
+
+**Acceptance Criteria**:
+- All subcommands work identically on Linux, macOS, Windows
+- Process management functions correctly on all platforms
+- Signal handling appropriate for each platform
+- File paths resolve correctly (Unix forward slash vs Windows backslash)
+
+**Estimated Time:** 2 hours
+
+---
+
+### Task 6.2: CI/CD Pipeline Updates
+**File**: `.github/workflows/release.yml`, `.github/workflows/test.yml`
+**Status**: ⬜ Pending
+
+**Steps**:
+1. [ ] Update workflows to install Cobra dependency
+2. [ ] Add cross-platform test job:
+   - Matrix build for Linux/macOS/Windows
+   - Run all unit and integration tests
+   - Verify backward compatibility tests
+3. [ ] Add binary size check:
+   - Ensure Cobra adds <5MB overhead
+   - Alert if binary size exceeds threshold
+4. [ ] Add performance benchmarks:
+   - CLI command response time <100ms
+   - Daemon startup time <5s
+
+**Acceptance Criteria**:
+- CI runs on all three platforms
+- All tests pass on all platforms
+- Binary size within acceptable limits
+- Performance benchmarks pass
+- Backward compatibility verified in CI
+
+**Estimated Time:** 1 hour
+
+---
+
+## Task Dependencies
+
+```
+Phase 1 (Module Structure)
+├── Task 1.1 (Package Structure) [MUST COMPLETE FIRST]
+├── Task 1.2 (Root Command) [depends on 1.1]
+├── Task 1.3 (Main Entry) [depends on 1.2]
+└── Task 1.4 (Compatibility Tests) [depends on 1.3]
+
+Phase 2 (Daemon & Start)
+├── Task 2.1 (State Management) [depends on Phase 1]
+├── Task 2.2 (Daemon Process) [depends on 2.1]
+└── Task 2.3 (Start Command) [depends on 2.2]
+
+Phase 3 (Stop & Status)
+├── Task 3.1 (Graceful Shutdown) [depends on Phase 2]
+├── Task 3.2 (Stop Command) [depends on 3.1]
+└── Task 3.3 (Status Command) [depends on 2.1]
+
+Phase 4 (Logs)
+├── Task 4.1 (File Logging) [depends on Phase 2]
+└── Task 4.2 (Logs Command) [depends on 4.1]
+
+Phase 5 (Code & Polish)
+├── Task 5.1 (Code Command) [depends on Phase 2]
+├── Task 5.2 (Error Handling) [depends on all commands]
+└── Task 5.3 (Documentation) [depends on 5.2]
+
+Phase 6 (Testing & CI)
+├── Task 6.1 (Manual Testing) [depends on Phase 5]
+└── Task 6.2 (CI Updates) [depends on 6.1]
+```
+
+## Testing Strategy
+
+### TDD Cycle for Each Task
+1. **Stub**: Create minimal function signatures and types
+2. **Test**: Write comprehensive unit tests covering success/failure cases
+3. **Implement**: Write production code to pass all tests
+4. **Refactor**: Improve code quality while maintaining test coverage
+
+### Test Coverage Goals
+- Unit test coverage: >90% for new packages (internal/cli/, internal/daemon/)
+- Integration test coverage: All user-facing workflows
+- Cross-platform tests: Automated via CI for Linux/macOS/Windows
+
+### Critical Test Scenarios
+1. **Backward Compatibility**: All existing CLI patterns work unchanged
+2. **Daemon Lifecycle**: Full start → status → stop workflow
+3. **Concurrent Start**: Multiple start attempts handled gracefully
+4. **Process Validation**: PID validation detects stale PID files
+5. **Log Rotation**: Rotation doesn't interrupt log streaming
+6. **Claude Integration**: Environment variables set correctly
+7. **Signal Handling**: Graceful shutdown completes in-flight requests
+
+## Definition of Done
+
+Each task is complete when:
+- [ ] All TDD steps completed (Stub → Test → Implement → Refactor)
+- [ ] Unit tests written and passing
+- [ ] Integration tests written (where applicable) and passing
+- [ ] Code reviewed for quality and consistency
+- [ ] Documentation updated (inline comments, README if needed)
+- [ ] Backward compatibility verified
+- [ ] No regression in existing functionality
+
+The feature is complete when:
+- [ ] All 6 phases completed
+- [ ] All 20 tasks marked complete
+- [ ] Cross-platform testing passed
+- [ ] CI/CD pipeline updated and green
+- [ ] Documentation complete
+- [ ] Performance benchmarks met
+- [ ] 100% backward compatibility maintained

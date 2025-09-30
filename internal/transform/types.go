@@ -1,6 +1,10 @@
 package transform
 
-import "encoding/json"
+import (
+	"encoding/json"
+
+	"athena/internal/config"
+)
 
 // Constants for repeated strings
 const (
@@ -35,11 +39,12 @@ type Tool struct {
 
 // OpenAIRequest represents the OpenAI/OpenRouter chat completions request format
 type OpenAIRequest struct {
-	Model       string          `json:"model"`
-	Messages    []OpenAIMessage `json:"messages"`
-	Temperature *float64        `json:"temperature,omitempty"`
-	Stream      bool            `json:"stream,omitempty"`
-	Tools       []OpenAITool    `json:"tools,omitempty"`
+	Model       string                 `json:"model"`
+	Messages    []OpenAIMessage        `json:"messages"`
+	Temperature *float64               `json:"temperature,omitempty"`
+	Stream      bool                   `json:"stream,omitempty"`
+	Tools       []OpenAITool           `json:"tools,omitempty"`
+	Provider    *config.ProviderConfig `json:"provider,omitempty"`
 }
 
 // OpenAIMessage represents a message in OpenAI format

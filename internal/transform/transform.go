@@ -13,13 +13,18 @@ import (
 	"athena/internal/config"
 )
 
+const (
+	contentTypeText = "text"
+	roleUser        = "user"
+	stopReasonEnd   = "end_turn"
+)
+
 // AnthropicToOpenAI converts Anthropic request to OpenAI format
 func AnthropicToOpenAI(req AnthropicRequest, cfg *config.Config) OpenAIRequest {
 	messages := []OpenAIMessage{}
 
 	// Handle system messages
 	if len(req.System) > 0 {
-		var systemContent interface{}
 		var systemArray []ContentBlock
 		if err := json.Unmarshal(req.System, &systemArray); err == nil {
 			for _, item := range systemArray {
@@ -55,7 +60,6 @@ func AnthropicToOpenAI(req AnthropicRequest, cfg *config.Config) OpenAIRequest {
 				})
 			}
 		}
-		_ = systemContent
 	}
 
 	// Transform messages
@@ -67,11 +71,17 @@ func AnthropicToOpenAI(req AnthropicRequest, cfg *config.Config) OpenAIRequest {
 	// Validate tool calls
 	messages = validateToolCalls(messages)
 
+	mappedModel := MapModel(req.Model, cfg)
 	result := OpenAIRequest{
-		Model:       MapModel(req.Model, cfg),
+		Model:       mappedModel,
 		Messages:    messages,
 		Temperature: req.Temperature,
 		Stream:      req.Stream,
+	}
+
+	// Add provider routing from config
+	if provider := GetProviderForModel(req.Model, cfg); provider != nil {
+		result.Provider = provider
 	}
 
 	// Transform tools
@@ -125,7 +135,7 @@ func transformMessage(msg Message) []OpenAIMessage {
 		toolCalls := []ToolCall{}
 
 		for _, block := range content {
-			if block.Type == "text" {
+			if block.Type == contentTypeText {
 				textContent += block.Text + "\n"
 			} else if block.Type == TypeToolUse {
 				args, _ := json.Marshal(block.Input)
@@ -153,12 +163,12 @@ func transformMessage(msg Message) []OpenAIMessage {
 		if assistantMsg.Content != nil || len(assistantMsg.ToolCalls) > 0 {
 			result = append(result, assistantMsg)
 		}
-	} else if msg.Role == "user" {
+	} else if msg.Role == roleUser {
 		userText := ""
 		toolMessages := []OpenAIMessage{}
 
 		for _, block := range content {
-			if block.Type == "text" {
+			if block.Type == contentTypeText {
 				userText += block.Text + "\n"
 			} else if block.Type == "tool_result" {
 				var content string
@@ -287,6 +297,25 @@ func MapModel(anthropicModel string, cfg *config.Config) string {
 	}
 }
 
+// GetProviderForModel returns the provider configuration for a given model
+func GetProviderForModel(anthropicModel string, cfg *config.Config) *config.ProviderConfig {
+	if strings.Contains(anthropicModel, "/") {
+		// Direct model ID - use default provider
+		return cfg.DefaultProvider
+	}
+
+	switch {
+	case strings.Contains(anthropicModel, "haiku"):
+		return cfg.HaikuProvider
+	case strings.Contains(anthropicModel, "sonnet"):
+		return cfg.SonnetProvider
+	case strings.Contains(anthropicModel, "opus"):
+		return cfg.OpusProvider
+	default:
+		return cfg.DefaultProvider
+	}
+}
+
 // removeUriFormat removes unsupported "format": "uri" from JSON schema
 func removeUriFormat(schema json.RawMessage) json.RawMessage {
 	var data interface{}
@@ -360,7 +389,7 @@ func OpenAIToAnthropic(resp map[string]interface{}, modelName string) map[string
 		}
 
 		finishReason := choice["finish_reason"].(string)
-		stopReason := "end_turn"
+		stopReason := stopReasonEnd
 		if finishReason == "tool_calls" {
 			stopReason = TypeToolUse
 		}
@@ -381,7 +410,7 @@ func OpenAIToAnthropic(resp map[string]interface{}, modelName string) map[string
 		"type":          "message",
 		"role":          "assistant",
 		"content":       content,
-		"stop_reason":   "end_turn",
+		"stop_reason":   stopReasonEnd,
 		"stop_sequence": nil,
 		"model":         modelName,
 	}
@@ -488,7 +517,7 @@ func HandleStreaming(w http.ResponseWriter, resp *http.Response, modelName strin
 	}
 
 	// Send message_delta and message_stop
-	stopReason := "end_turn"
+	stopReason := stopReasonEnd
 	if isToolUse {
 		stopReason = TypeToolUse
 	}

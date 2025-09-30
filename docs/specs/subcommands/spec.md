@@ -99,31 +99,48 @@ All subcommands must work on Linux, macOS, and Windows to maintain existing plat
 
 ### Excluded Features
 - Breaking changes to existing HTTP API endpoints
-- External dependencies beyond Cobra framework
+- External dependencies beyond Cobra framework (github.com/spf13/cobra)
 - Persistent state storage beyond PID and log files
 - Authentication or authorization for CLI commands
 - Remote daemon control or multi-host management
 - Service installation (systemd, launchd, Windows services)
 - Configuration file changes or new config options
+- Changes to existing internal packages (config, server, transform remain unchanged)
 
 ## Technical Architecture
 
 ### Architecture Changes
 
 #### CLI Structure
-**Current:** Single main() with flag.StringVar() calls  
-**Proposed:** Cobra root command with subcommands, maintaining flag compatibility  
-**Impact:** Major refactoring of CLI initialization code
+**Current:** Single main() with flag.StringVar() calls in cmd/athena/main.go
+**Proposed:** Cobra-based CLI with proper module structure:
+```
+cmd/athena/
+  └── main.go              # ~20 lines - CLI entry point
+internal/
+  ├── cli/                 # NEW - Command implementations
+  │   ├── root.go          # Root command + persistent flags
+  │   ├── start.go         # Start daemon command
+  │   ├── stop.go          # Stop daemon command
+  │   ├── status.go        # Status command
+  │   ├── logs.go          # Logs command
+  │   └── code.go          # Claude Code integration command
+  ├── daemon/              # NEW - Daemon lifecycle management
+  │   ├── daemon.go        # Process management
+  │   └── state.go         # PID/state file management
+  └── ...existing packages (config, server, transform, util)
+```
+**Impact:** Well-structured, testable code following Go best practices
 
 #### Process Management
-**Current:** Synchronous HTTP server startup  
-**Proposed:** Daemon mode with PID file tracking and signal handling  
-**Impact:** Need process forking/detachment logic for each platform
+**Current:** Synchronous HTTP server startup
+**Proposed:** Daemon mode with PID file tracking and signal handling
+**Impact:** New internal/daemon package for process management
 
 #### Logging
-**Current:** Standard output logging  
-**Proposed:** File-based logging with rotation in daemon mode  
-**Impact:** Implement log rotation and file management
+**Current:** Standard output logging
+**Proposed:** File-based logging with rotation in daemon mode
+**Impact:** Extend existing logging to support file output and rotation
 
 ### Platform-Specific Considerations
 
@@ -170,40 +187,135 @@ All subcommands must work on Linux, macOS, and Windows to maintain existing plat
 
 ## Implementation Phases
 
-### Phase 1: Cobra Integration
-**Deliverable:** CLI structure refactored with existing behavior preserved
-- Add Cobra dependency to go.mod
-- Create root command structure
-- Migrate existing flags to Cobra persistent flags
-- Maintain backward compatibility for direct execution
+### Phase 1: Module Structure & Cobra Integration (6 hours)
+**Deliverable:** New packages created, Cobra integrated, backward compatibility preserved
 
-### Phase 2: Basic Process Management
-**Deliverable:** Start/stop subcommands functional on primary platform
-- Implement start subcommand with daemon mode
-- Implement stop subcommand with graceful shutdown
-- Add PID file management
-- Create ~/.openrouter-cc directory structure
+**Tasks:**
+1. Create new package structure:
+   - `internal/cli/` package with root command
+   - `internal/daemon/` package structure
+2. Add Cobra dependency: `go get github.com/spf13/cobra@latest`
+3. Implement `internal/cli/root.go`:
+   - Root command with persistent flags (port, config, api-key, etc.)
+   - Default behavior runs server in foreground (backward compatible)
+4. Update `cmd/athena/main.go` to call CLI
+5. Ensure `athena` and `athena -port 9000` work exactly as before
 
-### Phase 3: Status and Logging
-**Deliverable:** Complete process monitoring and logging capabilities
-- Implement status subcommand with process information
-- Add file-based logging for daemon mode
-- Implement logs subcommand with real-time tailing
-- Add log rotation at 10MB threshold
+**Tests:**
+- Unit tests for root command flag parsing
+- Integration test: existing usage patterns work unchanged
 
-### Phase 4: Claude Code Integration
-**Deliverable:** Seamless Claude Code integration
-- Implement code subcommand
-- Set up environment variables for Claude Code
-- Handle Claude Code process lifecycle
-- Add error handling for missing claude command
+### Phase 2: Daemon Package & Start Command (8 hours)
+**Deliverable:** Daemon process management with start command functional
 
-### Phase 5: Cross-Platform Support
-**Deliverable:** Full cross-platform compatibility verified
-- Test and fix Windows-specific process management
-- Verify signal handling across all platforms
-- Test PID file locking on different filesystems
-- Update build pipeline for new dependency
+**Tasks:**
+1. Implement `internal/daemon/state.go`:
+   - ProcessState struct (PID, port, start time, config path)
+   - Save/load state to ~/.athena/athena.pid (JSON format)
+   - State validation (check process still alive)
+2. Implement `internal/daemon/daemon.go`:
+   - `Start()` function: fork process, detach, save PID
+   - Cross-platform process detachment
+3. Implement `internal/cli/start.go`:
+   - Parse start-specific flags
+   - Check if already running (read state)
+   - Call daemon.Start() with config
+   - Save PID and state
+4. Integrate with existing server package (no changes to server code)
+
+**Tests:**
+- Unit tests for state persistence
+- Integration test: start command creates daemon
+- Test: multiple start attempts handled correctly
+
+### Phase 3: Stop & Status Commands (5 hours)
+**Deliverable:** Process control and monitoring complete
+
+**Tasks:**
+1. Implement `internal/cli/stop.go`:
+   - Read PID from state file
+   - Graceful shutdown (SIGTERM) with 30s timeout
+   - Force kill option (--force flag)
+   - Clean up state file
+2. Implement `internal/cli/status.go`:
+   - Read state file
+   - Check if process alive
+   - Display: status, PID, uptime, port, config
+   - Support --json flag for machine-readable output
+3. Add graceful shutdown to server package:
+   - Listen for SIGTERM/SIGINT
+   - Close HTTP server gracefully
+
+**Tests:**
+- Unit tests for stop command logic
+- Unit tests for status output formatting
+- Integration test: full start → status → stop workflow
+
+### Phase 4: Logs Command (4 hours)
+**Deliverable:** Log management and streaming
+
+**Tasks:**
+1. Add file logging to daemon mode:
+   - Log to ~/.athena/athena.log when in daemon mode
+   - Keep stdout logging for foreground mode
+2. Implement log rotation in `internal/daemon/logging.go`:
+   - Rotate at 10MB
+   - Keep last 3 log files (athena.log, athena.log.1, athena.log.2)
+3. Implement `internal/cli/logs.go`:
+   - Display last N lines (--lines flag, default 50)
+   - Follow mode (--follow flag) with real-time tailing
+   - Handle log rotation gracefully
+
+**Tests:**
+- Unit tests for log rotation logic
+- Integration test: logs command displays output
+- Test: follow mode streams new entries
+
+### Phase 5: Code Command & Polish (4 hours)
+**Deliverable:** Claude Code integration and final testing
+
+**Tasks:**
+1. Implement `internal/cli/code.go`:
+   - Check daemon is running (read state)
+   - Set environment variables:
+     - `ANTHROPIC_API_KEY=dummy`
+     - `ANTHROPIC_BASE_URL=http://localhost:{port}/v1`
+   - Execute `claude` command with inherited env
+   - Pass through exit code
+2. Error handling polish:
+   - Helpful error messages for all failure modes
+   - Suggestions for common issues (daemon not running, etc.)
+3. Documentation updates:
+   - Update README with subcommand examples
+   - Add troubleshooting section
+
+**Tests:**
+- Unit tests for environment setup
+- Integration test: code command launches successfully
+- Test: error handling when daemon not running
+- Full end-to-end workflow test
+
+### Phase 6: Cross-Platform Testing & CI (3 hours)
+**Deliverable:** Verified cross-platform compatibility
+
+**Tasks:**
+1. Test on Linux, macOS, Windows:
+   - Process management works correctly
+   - Signal handling functions properly
+   - File paths resolve correctly
+2. Update CI/CD:
+   - Add Cobra dependency to builds
+   - Cross-platform test suite
+   - Binary size check (ensure reasonable overhead)
+3. Performance validation:
+   - CLI command response time <100ms
+   - Daemon startup <2s
+   - No regression in proxy performance
+
+**Tests:**
+- CI runs on all platforms
+- Performance benchmarks pass
+- Backward compatibility tests pass
 
 ## Testing Requirements
 

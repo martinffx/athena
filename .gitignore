@@ -18,8 +18,8 @@
 go.work
 
 # Build artifacts
-openrouter-cc
-openrouter-cc-*
+athena
+athena-*
 dist/
 build/
 

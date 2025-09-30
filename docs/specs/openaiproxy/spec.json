@@ -1,0 +1,96 @@
+{
+  "feature": "openaiproxy",
+  "user_story": "As a Claude Code user, I want to use the proxy to connect to OpenRouter with different model providers so that I can leverage OpenRouter's diverse model selection and competitive pricing while maintaining full compatibility with Claude Code's native API calling patterns",
+  "acceptance_criteria": [
+    "GIVEN a valid Anthropic API request WHEN the proxy transforms it to OpenAI format THEN all message structure, content blocks, and metadata are correctly converted maintaining semantic equivalence",
+    "GIVEN an OpenAI response from OpenRouter WHEN the proxy transforms it back THEN the response matches Anthropic format with proper field mapping (prompt_tokens → input_tokens, completion_tokens → output_tokens)",
+    "GIVEN a streaming request WHEN the proxy processes SSE events from OpenRouter THEN Anthropic-formatted events are emitted in correct order (message_start → content_block_start → content_block_delta → content_block_stop → message_delta → message_stop) with <100ms latency overhead",
+    "GIVEN a request with tool/function definitions WHEN the proxy transforms the request THEN tool schemas are cleaned (removing unsupported format: uri), tool_use calls are mapped correctly, and tool_result responses are properly structured",
+    "GIVEN a request with unsupported features (extended thinking, prompt caching, PDF input, batch API) WHEN the proxy validates the request THEN it rejects with clear error messages before forwarding to OpenRouter",
+    "GIVEN Claude Code executing core workflows (code generation, file operations, git operations, multi-step tasks) WHEN using the proxy THEN all operations succeed with identical behavior to native Anthropic API"
+  ],
+  "business_rules": [
+    "Strict Mode Operation: The proxy must operate in strict compatibility mode - reject any requests containing unsupported Anthropic features (extended thinking, prompt caching, PDF input, batch API) before forwarding to OpenRouter",
+    "Model Name Transformation: All model names must be prefixed with 'anthropic/' when forwarding to OpenRouter (e.g., 'claude-sonnet-4-20250514' → 'anthropic/claude-sonnet-4-20250514')",
+    "System Prompt Positioning: System prompts from Anthropic's system parameter must always be converted to the first message with role='system' in the OpenAI messages array",
+    "Error Format Preservation: All errors from OpenRouter must be transformed to match Anthropic's error response format with proper type mapping",
+    "Token Usage Mapping: Usage statistics must be renamed (prompt_tokens → input_tokens, completion_tokens → output_tokens) and total_tokens must be omitted from the response",
+    "Stream State Management: Streaming responses must maintain proper state machine transitions and emit events in the correct order with proper content block index tracking",
+    "Tool Call Validation: All tool_use calls must have corresponding tool responses validated via validateToolCalls() before forwarding",
+    "JSON Schema Cleaning: Remove unsupported 'format: uri' properties from tool schemas recursively using removeUriFormat() to ensure OpenRouter compatibility"
+  ],
+  "scope": {
+    "included": [
+      "Bidirectional API translation (Anthropic ↔ OpenAI format)",
+      "Non-streaming request/response handling",
+      "Real-time streaming via Server-Sent Events (SSE)",
+      "Tool/function calling translation (definitions, usage, results)",
+      "Multi-modal content support (text + images)",
+      "Error mapping and transformation",
+      "Health check endpoint",
+      "Configuration via environment variables and config files",
+      "Request validation and unsupported feature detection",
+      "Comprehensive logging and monitoring"
+    ],
+    "excluded": [
+      "Extended thinking support (Anthropic-specific feature)",
+      "Prompt caching functionality",
+      "Message Batches API",
+      "PDF input support",
+      "Request queuing and retry logic (Phase 2)",
+      "Response caching (Phase 2)",
+      "Multiple provider support and failover (Phase 2)",
+      "Rate limiting functionality (Phase 2)",
+      "Model routing and intelligent selection (Phase 3)",
+      "Custom tool transformations (Phase 3)"
+    ]
+  },
+  "aligns_with": "This specification documents Athena's core proxy functionality, which directly fulfills the product vision of enabling Claude Code to work with OpenRouter's diverse model selection. By maintaining strict API compatibility through bidirectional format translation, the proxy allows Claude Code developers to access multiple AI model providers while preserving their native API calling patterns. This aligns with the value proposition of zero-configuration model flexibility with cost optimization.",
+  "dependencies": [
+    "Go standard library (no external dependencies)",
+    "OpenRouter API availability",
+    "Anthropic API specification for request/response formats",
+    "OpenAI API specification for request/response formats"
+  ],
+  "technical_details": {
+    "key_components": [
+      "internal/transform/transform.go - Core bidirectional transformation logic",
+      "internal/config/config.go - Multi-source configuration management",
+      "HTTP server - Request handling, streaming, error responses",
+      "Model mapping - Configurable model name translation"
+    ],
+    "data_models": [
+      "AnthropicRequest - Anthropic Messages API format",
+      "AnthropicResponse - Anthropic Messages API response format",
+      "OpenAIRequest - OpenRouter/OpenAI chat completions request format",
+      "OpenAIMessage - OpenAI message structure",
+      "ContentBlock - Handles text, tool_use, and tool_result content types",
+      "Config - Unified configuration structure"
+    ],
+    "apis": [
+      "POST /v1/messages - Anthropic-compatible messages endpoint (non-streaming and streaming)",
+      "GET /health - Health check endpoint with service status, version, uptime, and request metrics"
+    ],
+    "transformation_patterns": {
+      "request_flow": "Anthropic API Input → AnthropicToOpenAI() → OpenRouter API → OpenAIToAnthropic() → Anthropic Format Output",
+      "system_message_handling": "Extract system parameter → Prepend as first message with role='system'",
+      "content_normalization": "Handle both string content and content block arrays",
+      "tool_schema_cleaning": "Recursive removeUriFormat() to strip unsupported JSON schema properties",
+      "streaming_state": "Track content block indices and tool call state during SSE processing"
+    },
+    "configuration_priority": "CLI flags > config files > env vars > defaults",
+    "config_search_paths": [
+      "~/.config/athena/athena.{yml,json}",
+      "./athena.{yml,json}",
+      "./.env"
+    ],
+    "performance_targets": {
+      "transformation_latency": "<1ms for typical requests",
+      "memory_allocation": "<100KB per request transformation",
+      "streaming_latency": "<50ms first byte time",
+      "throughput": "1000+ req/sec on standard hardware"
+    }
+  },
+  "implementation_status": "Production-ready - All core features are implemented, tested, and deployed. This specification documents existing functionality rather than defining new features.",
+  "notes": "This specification describes the EXISTING implementation of Athena's proxy functionality. The codebase already implements all specified features with comprehensive test coverage. The purpose of this spec is to provide a complete, structured reference for the current implementation rather than to guide new development. Key architectural decisions include: (1) zero external dependencies for maximum portability, (2) single-file component organization within standard cmd/internal structure, (3) strict API compatibility enforcement to prevent subtle behavior differences, and (4) configuration-driven model mapping to support diverse deployment scenarios from local Ollama to production OpenRouter."
+}

@@ -1,0 +1,346 @@
+{
+  "requirements": {
+    "entities": [
+      "AnthropicRequest - Anthropic Messages API request format",
+      "AnthropicResponse - Anthropic Messages API response format",
+      "OpenAIRequest - OpenRouter/OpenAI chat completions request format",
+      "OpenAIMessage - OpenAI message structure",
+      "OpenAITool - OpenAI tool definition structure",
+      "ContentBlock - Flexible content handling (text, tool_use, tool_result)",
+      "Message - Generic message structure",
+      "Tool - Tool definition",
+      "ToolCall - OpenAI tool call structure",
+      "Config - Configuration structure"
+    ],
+    "data_persistence": "None - Stateless proxy with no data persistence. All state is ephemeral and exists only during request/response processing. Configuration is loaded from files/env vars at startup.",
+    "api_needed": "POST /v1/messages (Anthropic-compatible messages endpoint supporting both streaming and non-streaming), GET /health (health check endpoint)",
+    "components": [
+      "HTTP Server - Request handling, routing, streaming",
+      "Request Transformer - AnthropicToOpenAI conversion",
+      "Response Transformer - OpenAIToAnthropic conversion",
+      "Streaming Handler - SSE event processing and state management",
+      "Configuration System - Multi-source config loading",
+      "Model Mapper - Configurable model name translation",
+      "Tool Validator - validateToolCalls() for request validation",
+      "Schema Cleaner - removeUriFormat() for JSON schema compatibility"
+    ],
+    "domains": [
+      "API Translation - Core domain handling bidirectional format conversion",
+      "Streaming - Real-time SSE event generation and transformation",
+      "Configuration - Multi-source configuration management",
+      "Model Mapping - Dynamic model name resolution"
+    ],
+    "business_rules": [
+      "Strict compatibility mode - reject unsupported Anthropic features",
+      "Model name transformation - prefix with 'anthropic/' for OpenRouter",
+      "System prompt positioning - convert to first message with role='system'",
+      "Error format preservation - transform all errors to Anthropic format",
+      "Token usage mapping - rename fields and omit total_tokens",
+      "Stream state management - maintain proper event order and indices",
+      "Tool call validation - ensure responses match calls",
+      "JSON schema cleaning - remove unsupported format properties"
+    ]
+  },
+  "technical_needs": {
+    "domain_model": {
+      "entities": {
+        "AnthropicRequest": {
+          "purpose": "Parse and validate incoming Anthropic API requests",
+          "fields": ["model", "messages", "system", "temperature", "max_tokens", "stream", "tools"],
+          "validation": "Validate required fields, detect unsupported features"
+        },
+        "OpenAIRequest": {
+          "purpose": "Construct OpenRouter-compatible requests",
+          "fields": ["model", "messages", "temperature", "stream", "tools", "provider"],
+          "transformation": "Convert from AnthropicRequest via AnthropicToOpenAI()"
+        },
+        "ContentBlock": {
+          "purpose": "Handle diverse content types in messages",
+          "types": ["text", "tool_use", "tool_result", "image"],
+          "methods": "Flexible JSON marshaling/unmarshaling"
+        },
+        "Config": {
+          "purpose": "Unified configuration from multiple sources",
+          "fields": ["port", "base_url", "api_key", "model", "opus_model", "sonnet_model", "haiku_model"],
+          "loading": "CLI flags > config files > env vars > defaults"
+        }
+      },
+      "services": {
+        "TransformationService": {
+          "responsibilities": [
+            "AnthropicToOpenAI() - Request transformation",
+            "OpenAIToAnthropic() - Response transformation",
+            "MapModel() - Model name mapping",
+            "removeUriFormat() - JSON schema cleaning",
+            "validateToolCalls() - Tool validation"
+          ],
+          "location": "internal/transform/transform.go"
+        },
+        "StreamingService": {
+          "responsibilities": [
+            "HandleStreaming() - SSE event processing",
+            "State management - track content blocks and indices",
+            "Event generation - emit Anthropic-formatted events",
+            "Buffer management - line-by-line SSE processing"
+          ],
+          "location": "internal/transform/transform.go"
+        },
+        "ConfigService": {
+          "responsibilities": [
+            "loadConfig() - Multi-source configuration loading",
+            "Priority resolution - handle config precedence",
+            "File search - locate config files in standard paths"
+          ],
+          "location": "internal/config/config.go"
+        }
+      }
+    },
+    "persistence": {
+      "required": false,
+      "rationale": "Stateless proxy design - no data persistence needed. All transformations are ephemeral."
+    },
+    "router": {
+      "endpoints": [
+        {
+          "path": "/v1/messages",
+          "method": "POST",
+          "handler": "handleMessages",
+          "description": "Anthropic-compatible messages endpoint",
+          "features": ["streaming", "non-streaming", "tool calling", "multi-modal"]
+        },
+        {
+          "path": "/health",
+          "method": "GET",
+          "handler": "handleHealth",
+          "description": "Health check endpoint with service status and metrics"
+        }
+      ]
+    },
+    "events": {
+      "streaming_events": [
+        "message_start - Initial message metadata",
+        "content_block_start - Start of content block",
+        "content_block_delta - Incremental content updates",
+        "content_block_stop - End of content block",
+        "message_delta - Message-level updates (usage, stop_reason)",
+        "message_stop - Stream completion"
+      ],
+      "event_sources": "OpenRouter SSE events (OpenAI format)",
+      "event_consumers": "Claude Code (Anthropic format)"
+    },
+    "dependencies": {
+      "internal": [
+        "internal/transform - Transformation logic",
+        "internal/config - Configuration management"
+      ],
+      "external": [
+        "Go standard library only (net/http, encoding/json, bufio)",
+        "OpenRouter API (runtime dependency)",
+        "Anthropic API specification (design dependency)",
+        "OpenAI API specification (design dependency)"
+      ]
+    }
+  },
+  "design": {
+    "architecture_pattern": "Stateless HTTP Proxy with Transformation Layer",
+    "request_flow": "Claude Code → HTTP Server → Request Transformer → OpenRouter Client → Response Transformer → Claude Code",
+    "component_structure": "HTTP Handler → Transformation Service → Upstream Client",
+    "domain_model": {
+      "entities": {
+        "AnthropicRequest": {
+          "responsibilities": [
+            "Validate incoming request structure",
+            "Detect unsupported features",
+            "Provide transformation source"
+          ],
+          "methods": "Implicit via transformation functions"
+        },
+        "OpenAIRequest": {
+          "responsibilities": [
+            "Represent OpenRouter-compatible request",
+            "Encapsulate transformed data"
+          ],
+          "methods": "Constructed by AnthropicToOpenAI()"
+        },
+        "ContentBlock": {
+          "responsibilities": [
+            "Handle polymorphic content types",
+            "Support text, tool_use, tool_result, images",
+            "Enable flexible JSON processing"
+          ],
+          "methods": "JSON marshaling with type discrimination"
+        }
+      },
+      "services": {
+        "TransformationService": {
+          "functions": [
+            "AnthropicToOpenAI(req AnthropicRequest, cfg Config) (OpenAIRequest, error)",
+            "OpenAIToAnthropic(resp OpenAIResponse) (AnthropicResponse, error)",
+            "MapModel(model string, cfg Config) string",
+            "removeUriFormat(schema json.RawMessage) json.RawMessage",
+            "validateToolCalls(messages []Message) error"
+          ],
+          "patterns": [
+            "Functional transformation approach",
+            "Error-tolerant parsing",
+            "Recursive schema processing",
+            "State tracking for streaming"
+          ]
+        },
+        "StreamingService": {
+          "functions": [
+            "HandleStreaming(w http.ResponseWriter, resp *http.Response, model string)",
+            "processSSELine(line string) []AnthropicEvent",
+            "emitEvent(w http.ResponseWriter, event AnthropicEvent)"
+          ],
+          "state_machine": [
+            "Track message_started flag",
+            "Track block_started flag",
+            "Track current_block_index",
+            "Track input_tokens and output_tokens"
+          ]
+        }
+      }
+    },
+    "data_flow": {
+      "request_pipeline": [
+        "1. HTTP Handler receives POST /v1/messages",
+        "2. Parse and validate AnthropicRequest",
+        "3. Detect unsupported features (reject if found)",
+        "4. Transform via AnthropicToOpenAI()",
+        "5. Apply model mapping",
+        "6. Clean tool schemas (removeUriFormat)",
+        "7. Forward to OpenRouter API",
+        "8. Receive OpenAI-formatted response",
+        "9. Transform via OpenAIToAnthropic() or HandleStreaming()",
+        "10. Return Anthropic-formatted response"
+      ],
+      "streaming_pipeline": [
+        "1. Detect stream=true in request",
+        "2. Make streaming request to OpenRouter",
+        "3. Establish SSE connection to client",
+        "4. Emit message_start event",
+        "5. Process OpenAI SSE lines",
+        "6. Generate Anthropic events (content_block_start, deltas, stop)",
+        "7. Track state (indices, tokens)",
+        "8. Emit message_delta and message_stop",
+        "9. Close stream"
+      ]
+    },
+    "api_specification": {
+      "POST /v1/messages": {
+        "request_format": "Anthropic Messages API",
+        "response_format": "Anthropic Messages API",
+        "headers": {
+          "required": ["Content-Type: application/json"],
+          "optional": ["x-api-key", "anthropic-version"]
+        },
+        "features": [
+          "Non-streaming responses",
+          "Streaming via Server-Sent Events",
+          "Tool/function calling",
+          "Multi-modal content (text + images)",
+          "System prompts",
+          "Temperature and token controls"
+        ],
+        "error_responses": [
+          "400 - Invalid request or unsupported feature",
+          "401 - Authentication error",
+          "404 - Model not found",
+          "429 - Rate limit exceeded",
+          "500 - Internal server error",
+          "502 - OpenRouter connection failure",
+          "504 - Request timeout"
+        ]
+      },
+      "GET /health": {
+        "response_format": "JSON with status, version, uptime, metrics",
+        "purpose": "Service monitoring and health checks"
+      }
+    },
+    "configuration_design": {
+      "sources": [
+        "CLI flags (highest priority)",
+        "Config files (athena.yml, athena.json)",
+        "Environment variables",
+        "Built-in defaults (lowest priority)"
+      ],
+      "search_paths": [
+        "~/.config/athena/athena.{yml,json}",
+        "./athena.{yml,json}",
+        "./.env"
+      ],
+      "parameters": {
+        "port": "HTTP server port (default: 11434)",
+        "base_url": "OpenRouter API URL",
+        "api_key": "OpenRouter API key",
+        "model": "Default model mapping",
+        "opus_model": "Model for claude-*-opus requests",
+        "sonnet_model": "Model for claude-*-sonnet requests",
+        "haiku_model": "Model for claude-*-haiku requests"
+      }
+    },
+    "transformation_patterns": {
+      "system_message_handling": {
+        "input": "Anthropic system parameter (string or array)",
+        "output": "First OpenAI message with role='system'",
+        "logic": "Extract from request, prepend to messages array"
+      },
+      "content_normalization": {
+        "input": "String or content block array",
+        "output": "Normalized OpenAI content structure",
+        "logic": "Handle both simple strings and complex block arrays"
+      },
+      "tool_schema_cleaning": {
+        "input": "Anthropic tool definitions with input_schema",
+        "output": "OpenAI tool definitions with cleaned parameters",
+        "logic": "Recursive removal of 'format: uri' properties"
+      },
+      "model_mapping": {
+        "input": "Anthropic model name (e.g., claude-sonnet-4-20250514)",
+        "output": "OpenRouter model ID (e.g., anthropic/claude-sonnet-4-20250514)",
+        "logic": "Pattern matching (opus/sonnet/haiku) + config lookup + prefix addition"
+      },
+      "error_transformation": {
+        "input": "OpenAI error format",
+        "output": "Anthropic error format",
+        "logic": "Map error types, preserve messages, add proper structure"
+      }
+    },
+    "performance_characteristics": {
+      "transformation_latency": "<1ms for typical requests",
+      "memory_allocation": "<100KB per request",
+      "streaming_first_byte": "<50ms",
+      "throughput": "1000+ requests/second",
+      "optimization_techniques": [
+        "json.RawMessage for pass-through data",
+        "Minimal string allocations",
+        "Efficient SSE buffering",
+        "Stateless design for concurrency"
+      ]
+    }
+  },
+  "implementation_notes": {
+    "architectural_decisions": [
+      "Single binary with zero external dependencies for maximum portability",
+      "Stateless design enables horizontal scaling",
+      "Configuration-driven model mapping supports diverse deployment scenarios",
+      "Strict API compatibility prevents subtle behavior differences",
+      "Functional transformation approach enables easy testing"
+    ],
+    "key_challenges": [
+      "Streaming state management - solved via state machine with tracked indices",
+      "Tool schema compatibility - solved via recursive removeUriFormat()",
+      "System message positioning - solved via extraction and prepending",
+      "Error format preservation - solved via comprehensive error mapping"
+    ],
+    "testing_strategy": [
+      "Unit tests for transformation functions",
+      "Integration tests for full request/response cycles",
+      "Streaming tests for SSE event generation",
+      "Error scenario tests for all error paths",
+      "Performance benchmarks for transformation latency"
+    ]
+  },
+  "status": "Production-ready - This design documents the EXISTING implementation"
+}

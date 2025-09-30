@@ -1,261 +1,543 @@
 {
-  "project": "cli_subcommands_with_cobra",
-  "architecture": "single_file_cobra_simple_functions",
-  "approach": "cobra_framework_with_function_based_implementation",
-  "external_dependencies": [
-    "github.com/spf13/cobra"
-  ],
-  "task_categories": {
-    "foundation": {
-      "description": "Core utilities and Cobra setup",
+  "feature": "CLI Subcommands",
+  "version": "1.0.0",
+  "created": "2025-01-08",
+  "total_phases": 2,
+  "total_tasks": 9,
+  "phases": {
+    "daemon_domain": {
+      "name": "Daemon Management Domain",
+      "description": "Process lifecycle and state management - foundation layer",
       "order": 1,
-      "estimated_hours": 6
+      "dependencies": [],
+      "estimated_hours": 15,
+      "tasks": [
+        "daemon_state",
+        "daemon_process",
+        "daemon_logging"
+      ]
     },
-    "functions": {
-      "description": "Process and file management functions",
+    "cli_domain": {
+      "name": "CLI Command Domain",
+      "description": "Cobra command handlers that consume daemon domain functionality",
       "order": 2,
-      "estimated_hours": 10
-    },
-    "commands": {
-      "description": "Cobra command implementations",
-      "order": 3,
-      "estimated_hours": 12
-    },
-    "integration": {
-      "description": "Main function refactor and testing",
-      "order": 4,
-      "estimated_hours": 8
+      "dependencies": ["daemon_domain"],
+      "estimated_hours": 15,
+      "tasks": [
+        "cli_root",
+        "cli_start",
+        "cli_stop",
+        "cli_status",
+        "cli_logs",
+        "cli_code"
+      ]
     }
   },
-  "total_estimated_hours": 36,
-  "tasks": [
-    {
-      "id": "F001",
-      "category": "foundation",
-      "name": "Add Cobra Dependency and Basic Structure",
-      "description": "Add Cobra to go.mod and create basic command structure",
+  "tasks": {
+    "daemon_state": {
+      "name": "Daemon State Management",
+      "phase": "daemon_domain",
+      "order": 1,
+      "estimated_hours": 5,
+      "file": "internal/daemon/state.go",
+      "test_file": "internal/daemon/state_test.go",
+      "description": "PID file and process state persistence with atomic operations",
+      "tdd_steps": [
+        {
+          "step": "stub",
+          "description": "Create ProcessState struct and function signatures (SaveState, LoadState, CleanupState, Validate)",
+          "acceptance": "Code compiles with empty implementations returning nil/empty values"
+        },
+        {
+          "step": "test",
+          "description": "Write tests for state persistence, validation, atomic operations, and cleanup",
+          "acceptance": "Tests written and fail appropriately (red state)"
+        },
+        {
+          "step": "implement",
+          "description": "Implement JSON persistence with file locking, atomic writes, and validation logic",
+          "acceptance": "All tests pass (green state)"
+        },
+        {
+          "step": "refactor",
+          "description": "Extract common file operations, improve error messages, optimize file I/O",
+          "acceptance": "Tests still pass, code quality improved"
+        }
+      ],
       "dependencies": [],
-      "deliverables": [
-        "Update go.mod with Cobra dependency",
-        "Create root command structure",
-        "Add persistent flags for existing CLI options",
-        "Create basic command routing"
+      "acceptance_criteria": [
+        "ProcessState struct contains PID, port, start_time, config_path",
+        "SaveState creates PID file at ~/.openrouter-cc/openrouter-cc.pid with 0600 permissions",
+        "LoadState reads and validates PID file, checks process exists",
+        "CleanupState removes PID file atomically",
+        "Validate enforces business rules (PID>0, valid port range, reasonable timestamps)",
+        "All file operations use atomic writes (temp file + rename)",
+        "File locking prevents concurrent modifications"
       ],
-      "effort_hours": 3,
-      "code_example": "var rootCmd = &cobra.Command{Use: \"openrouter-cc\", Short: \"OpenRouter proxy for Claude Code\"}"
+      "integration_points": [
+        "internal/util.GetDataDir() for file paths",
+        "internal/util.IsProcessRunning() for validation",
+        "internal/util.LockFile/UnlockFile for file locking"
+      ]
     },
-    {
-      "id": "F002",
-      "category": "foundation",
-      "name": "Data Directory Management Functions",
-      "description": "Simple functions for managing ~/.openrouter-cc/ directory",
+    "daemon_process": {
+      "name": "Daemon Process Control",
+      "phase": "daemon_domain",
+      "order": 2,
+      "estimated_hours": 6,
+      "file": "internal/daemon/daemon.go",
+      "test_file": "internal/daemon/daemon_test.go",
+      "description": "Cross-platform daemon lifecycle: start, stop, status with signal handling",
+      "tdd_steps": [
+        {
+          "step": "stub",
+          "description": "Create function signatures (StartDaemon, StopDaemon, GetStatus) and Status struct",
+          "acceptance": "Code compiles with empty implementations"
+        },
+        {
+          "step": "test",
+          "description": "Write tests for daemon lifecycle, signal handling, timeout behavior, status reporting",
+          "acceptance": "Tests written covering happy path and edge cases (already running, not found, timeout)"
+        },
+        {
+          "step": "implement",
+          "description": "Implement process forking, signal handling (SIGTERM/SIGINT), graceful shutdown, status checks",
+          "acceptance": "All tests pass including cross-platform process management"
+        },
+        {
+          "step": "refactor",
+          "description": "Extract platform-specific code, improve error handling, optimize process checks",
+          "acceptance": "Tests pass, platform differences isolated"
+        }
+      ],
+      "dependencies": ["daemon_state"],
+      "acceptance_criteria": [
+        "StartDaemon forks process using os/exec, detaches from terminal, saves state",
+        "StartDaemon returns error if daemon already running",
+        "StopDaemon sends SIGTERM, waits for graceful exit up to timeout",
+        "StopDaemon force kills if timeout exceeded",
+        "GetStatus reports running/stopped, PID, uptime, memory usage, port",
+        "Cross-platform process group handling (Unix: Setpgid, Windows: CREATE_NEW_PROCESS_GROUP)",
+        "I/O redirection to log files, not terminal",
+        "State cleanup on daemon exit"
+      ],
+      "integration_points": [
+        "internal/daemon/state.go for state persistence",
+        "internal/config.Config for daemon configuration",
+        "internal/server.New() for HTTP server creation",
+        "internal/util.IsProcessRunning() for process checks"
+      ]
+    },
+    "daemon_logging": {
+      "name": "Daemon Logging System",
+      "phase": "daemon_domain",
+      "order": 3,
+      "estimated_hours": 4,
+      "file": "internal/daemon/logging.go",
+      "test_file": "internal/daemon/logging_test.go",
+      "description": "File-based logging with rotation for daemon mode",
+      "tdd_steps": [
+        {
+          "step": "stub",
+          "description": "Create function signatures for log setup, rotation, and reading (SetupLogging, RotateLogs, GetLogs)",
+          "acceptance": "Code compiles with empty implementations"
+        },
+        {
+          "step": "test",
+          "description": "Write tests for log file creation, rotation at 10MB, keeping 3 files, reading last N lines",
+          "acceptance": "Tests written covering rotation logic and edge cases"
+        },
+        {
+          "step": "implement",
+          "description": "Implement file logging with size-based rotation, log reading with line limits",
+          "acceptance": "All tests pass, logs rotate correctly, reading works"
+        },
+        {
+          "step": "refactor",
+          "description": "Extract file size checking, improve rotation logic, optimize line reading",
+          "acceptance": "Tests pass, rotation logic clean and efficient"
+        }
+      ],
+      "dependencies": ["daemon_state"],
+      "acceptance_criteria": [
+        "SetupLogging configures log output to ~/.openrouter-cc/openrouter-cc.log in daemon mode",
+        "Logs written with 0644 permissions",
+        "Rotation at 10MB: openrouter-cc.log -> openrouter-cc.log.1 -> openrouter-cc.log.2",
+        "Keep only last 3 log files",
+        "GetLogs reads last N lines efficiently (reverse file reading)",
+        "GetLogs supports streaming new entries (tail -f behavior)",
+        "Handle log rotation gracefully during streaming"
+      ],
+      "integration_points": [
+        "internal/util.GetLogFilePath() for log file location",
+        "internal/daemon/state.go for daemon state checks"
+      ]
+    },
+    "cli_root": {
+      "name": "Root Command and Cobra Integration",
+      "phase": "cli_domain",
+      "order": 1,
+      "estimated_hours": 3,
+      "file": "internal/cli/root.go",
+      "test_file": "internal/cli/root_test.go",
+      "description": "Cobra root command with persistent flags and backward compatibility",
+      "tdd_steps": [
+        {
+          "step": "stub",
+          "description": "Create root command struct, Execute() function, persistent flag definitions",
+          "acceptance": "Code compiles, Execute() returns nil"
+        },
+        {
+          "step": "test",
+          "description": "Write tests for flag parsing, default behavior, backward compatibility scenarios",
+          "acceptance": "Tests written for legacy mode (no subcommand) and flag precedence"
+        },
+        {
+          "step": "implement",
+          "description": "Implement Cobra root command, persistent flags (port, config, api-key), default RunE behavior",
+          "acceptance": "Tests pass, 'openrouter-cc -port 9000' works as before"
+        },
+        {
+          "step": "refactor",
+          "description": "Extract flag application logic, improve help text, clean up command setup",
+          "acceptance": "Tests pass, command structure clean"
+        }
+      ],
       "dependencies": [],
-      "deliverables": [
-        "getDataDir() (string, error)",
-        "ensureDataDir() error",
-        "getPidFilePath() (string, error)",
-        "getLogFilePath() (string, error)"
+      "acceptance_criteria": [
+        "Root command created with Cobra framework",
+        "Persistent flags: --config, --port, --api-key, --base-url, --opus-model, --sonnet-model, --haiku-model",
+        "Default behavior (no subcommand): start server in foreground (legacy mode)",
+        "Execute() entry point for cmd/athena/main.go",
+        "Backward compatibility: 'openrouter-cc -port 9000' works unchanged",
+        "Help text clear and consistent",
+        "Flag precedence maintained: CLI > config file > env > defaults"
       ],
-      "effort_hours": 3,
-      "code_example": "func getDataDir() (string, error) { home, _ := os.UserHomeDir(); return filepath.Join(home, \".openrouter-cc\"), nil }"
+      "integration_points": [
+        "internal/config.Load() for configuration",
+        "internal/server.New() for server creation",
+        "github.com/spf13/cobra for CLI framework"
+      ]
     },
-    {
-      "id": "P001",
-      "category": "functions", 
-      "name": "PID File Operations",
-      "description": "Simple functions for PID file management",
-      "dependencies": ["F002"],
-      "deliverables": [
-        "readPidFile() (int, error)",
-        "writePidFile(pid int) error", 
-        "removePidFile() error",
-        "isProcessRunning(pid int) bool"
-      ],
-      "effort_hours": 3,
-      "code_example": "func readPidFile() (int, error) { data, err := os.ReadFile(pidPath); return strconv.Atoi(string(data)) }"
-    },
-    {
-      "id": "P002",
-      "category": "functions",
-      "name": "Process Status Functions",
-      "description": "Functions to check and manage process status",
-      "dependencies": ["P001"],
-      "deliverables": [
-        "getProcessStatus() ProcessStatus",
-        "ProcessStatus struct definition",
-        "Health check integration"
-      ],
-      "effort_hours": 4,
-      "code_example": "type ProcessStatus struct { Running bool; PID int; Port string; Error string }"
-    },
-    {
-      "id": "P003",
-      "category": "functions",
-      "name": "Daemon Management Functions",
-      "description": "Functions to start and stop daemon processes",
-      "dependencies": ["P002"],
-      "deliverables": [
-        "startDaemonProcess() error",
-        "stopDaemonProcess() error",
-        "Signal handling setup",
-        "Cross-platform process management"
-      ],
-      "effort_hours": 3,
-      "platform_notes": "Use os/exec and syscall for Unix, os.Process for Windows"
-    },
-    {
-      "id": "C001", 
-      "category": "commands",
+    "cli_start": {
       "name": "Start Command",
-      "description": "Cobra command to start daemon",
-      "dependencies": ["F001", "P003"],
-      "deliverables": [
-        "startCmd cobra.Command implementation",
-        "Daemon startup logic",
-        "PID file creation",
-        "Status reporting"
+      "phase": "cli_domain",
+      "order": 2,
+      "estimated_hours": 3,
+      "file": "internal/cli/start.go",
+      "test_file": "internal/cli/start_test.go",
+      "description": "Start daemon command with configuration and state management",
+      "tdd_steps": [
+        {
+          "step": "stub",
+          "description": "Create start command struct, RunE function signature",
+          "acceptance": "Code compiles, command registered with root"
+        },
+        {
+          "step": "test",
+          "description": "Write tests for daemon startup, already running detection, configuration loading",
+          "acceptance": "Tests written for success and error cases"
+        },
+        {
+          "step": "implement",
+          "description": "Implement daemon startup flow: load config, check state, call daemon.StartDaemon, save state",
+          "acceptance": "Tests pass, 'openrouter-cc start' launches daemon"
+        },
+        {
+          "step": "refactor",
+          "description": "Extract status display logic, improve error messages, clean up flow",
+          "acceptance": "Tests pass, error messages helpful"
+        }
       ],
-      "effort_hours": 3,
-      "code_example": "var startCmd = &cobra.Command{Use: \"start\", Run: func(cmd *cobra.Command, args []string) { startDaemonProcess() }}"
+      "dependencies": ["daemon_process", "cli_root"],
+      "acceptance_criteria": [
+        "Start command registered with root command",
+        "Loads configuration from flags, config file, env vars",
+        "Checks if daemon already running (via daemon.GetStatus)",
+        "Calls daemon.StartDaemon with configuration",
+        "Displays success message with PID and port",
+        "Returns error if daemon already running or start fails",
+        "Progress indicators during startup",
+        "Validates configuration before starting"
+      ],
+      "integration_points": [
+        "internal/daemon.StartDaemon() for process creation",
+        "internal/daemon.GetStatus() for duplicate detection",
+        "internal/config.Load() for configuration",
+        "internal/cli/root.go persistent flags"
+      ]
     },
-    {
-      "id": "C002",
-      "category": "commands", 
+    "cli_stop": {
       "name": "Stop Command",
-      "description": "Cobra command to stop daemon",
-      "dependencies": ["F001", "P003"],
-      "deliverables": [
-        "stopCmd cobra.Command implementation",
-        "Graceful shutdown logic",
-        "PID file cleanup",
-        "Timeout handling"
+      "phase": "cli_domain",
+      "order": 3,
+      "estimated_hours": 2,
+      "file": "internal/cli/stop.go",
+      "test_file": "internal/cli/stop_test.go",
+      "description": "Stop daemon command with graceful shutdown and timeout",
+      "tdd_steps": [
+        {
+          "step": "stub",
+          "description": "Create stop command struct, RunE function signature, timeout flag",
+          "acceptance": "Code compiles, command registered"
+        },
+        {
+          "step": "test",
+          "description": "Write tests for graceful stop, force kill on timeout, not running case",
+          "acceptance": "Tests written for success and error scenarios"
+        },
+        {
+          "step": "implement",
+          "description": "Implement stop flow: read state, call daemon.StopDaemon with timeout, cleanup",
+          "acceptance": "Tests pass, 'openrouter-cc stop' terminates daemon"
+        },
+        {
+          "step": "refactor",
+          "description": "Improve timeout handling, better error messages, clean up logic",
+          "acceptance": "Tests pass, stop behavior clean"
+        }
       ],
-      "effort_hours": 3,
-      "code_example": "var stopCmd = &cobra.Command{Use: \"stop\", Run: func(cmd *cobra.Command, args []string) { stopDaemonProcess() }}"
-    },
-    {
-      "id": "C003",
-      "category": "commands",
-      "name": "Status Command", 
-      "description": "Cobra command to show daemon status",
-      "dependencies": ["F001", "P002"],
-      "deliverables": [
-        "statusCmd cobra.Command implementation",
-        "Process status display",
-        "Health check reporting",
-        "Formatted output"
+      "dependencies": ["daemon_process", "cli_root"],
+      "acceptance_criteria": [
+        "Stop command registered with root command",
+        "--timeout flag for graceful shutdown duration (default: 30s)",
+        "Checks if daemon running before attempting stop",
+        "Calls daemon.StopDaemon with configured timeout",
+        "Displays success message on clean stop",
+        "Returns error if daemon not running or stop fails",
+        "Indicates when force kill is used (timeout exceeded)",
+        "Cleans up PID file on successful stop"
       ],
-      "effort_hours": 2,
-      "code_example": "fmt.Printf(\"Server running: %t (PID: %d)\\n\", status.Running, status.PID)"
+      "integration_points": [
+        "internal/daemon.StopDaemon() for process termination",
+        "internal/daemon.GetStatus() for pre-check",
+        "internal/daemon.CleanupState() for cleanup"
+      ]
     },
-    {
-      "id": "C004",
-      "category": "commands",
+    "cli_status": {
+      "name": "Status Command",
+      "phase": "cli_domain",
+      "order": 4,
+      "estimated_hours": 2,
+      "file": "internal/cli/status.go",
+      "test_file": "internal/cli/status_test.go",
+      "description": "Status display command with human and JSON output formats",
+      "tdd_steps": [
+        {
+          "step": "stub",
+          "description": "Create status command struct, RunE function signature, json flag",
+          "acceptance": "Code compiles, command registered"
+        },
+        {
+          "step": "test",
+          "description": "Write tests for status display, JSON output, running/stopped states",
+          "acceptance": "Tests written for output formatting and state cases"
+        },
+        {
+          "step": "implement",
+          "description": "Implement status display: get daemon.Status, format for human/JSON output",
+          "acceptance": "Tests pass, 'openrouter-cc status' shows daemon state"
+        },
+        {
+          "step": "refactor",
+          "description": "Extract formatting functions, improve output layout, clean up logic",
+          "acceptance": "Tests pass, output clear and consistent"
+        }
+      ],
+      "dependencies": ["daemon_process", "cli_root"],
+      "acceptance_criteria": [
+        "Status command registered with root command",
+        "--json flag for machine-readable output",
+        "Calls daemon.GetStatus() for current state",
+        "Human output shows: status, PID, port, uptime, memory, config path",
+        "JSON output contains all status fields",
+        "Handles daemon not running gracefully",
+        "Clear status indicators (Running/Stopped/Failed)",
+        "Uptime formatted as human-readable duration"
+      ],
+      "integration_points": [
+        "internal/daemon.GetStatus() for daemon state",
+        "encoding/json for JSON output"
+      ]
+    },
+    "cli_logs": {
       "name": "Logs Command",
-      "description": "Cobra command to view logs",
-      "dependencies": ["F002"],
-      "deliverables": [
-        "logsCmd cobra.Command implementation", 
-        "Log file tailing functionality",
-        "Follow mode (-f flag)",
-        "Log rotation handling"
+      "phase": "cli_domain",
+      "order": 5,
+      "estimated_hours": 3,
+      "file": "internal/cli/logs.go",
+      "test_file": "internal/cli/logs_test.go",
+      "description": "Log streaming command with follow mode and line limits",
+      "tdd_steps": [
+        {
+          "step": "stub",
+          "description": "Create logs command struct, RunE function signature, flags (lines, follow)",
+          "acceptance": "Code compiles, command registered"
+        },
+        {
+          "step": "test",
+          "description": "Write tests for log display, follow mode, line limits, rotation handling",
+          "acceptance": "Tests written for streaming and static display"
+        },
+        {
+          "step": "implement",
+          "description": "Implement log reading: display last N lines, stream new entries if --follow",
+          "acceptance": "Tests pass, 'openrouter-cc logs' shows daemon logs"
+        },
+        {
+          "step": "refactor",
+          "description": "Extract streaming logic, improve rotation handling, optimize line reading",
+          "acceptance": "Tests pass, streaming smooth and efficient"
+        }
       ],
-      "effort_hours": 2,
-      "code_example": "tail -f equivalent using bufio.Scanner and file.Seek()"
+      "dependencies": ["daemon_logging", "cli_root"],
+      "acceptance_criteria": [
+        "Logs command registered with root command",
+        "--lines flag for number of lines to display (default: 50)",
+        "--follow flag for real-time streaming",
+        "Displays existing log content from daemon log file",
+        "Follow mode streams new entries as they're written",
+        "Handles log rotation gracefully (reopens new file)",
+        "Exits cleanly on Ctrl+C",
+        "Returns error if daemon not running or log file missing"
+      ],
+      "integration_points": [
+        "internal/daemon.GetLogs() for log reading",
+        "internal/daemon.GetStatus() for daemon check",
+        "internal/util.GetLogFilePath() for log location"
+      ]
     },
-    {
-      "id": "C005",
-      "category": "commands",
-      "name": "Code Command",
-      "description": "Cobra command to launch Claude Code",
-      "dependencies": ["F001", "P002"],
-      "deliverables": [
-        "codeCmd cobra.Command implementation",
-        "Auto-start daemon if needed",
-        "Environment variable setup",
-        "Claude Code process spawning"
+    "cli_code": {
+      "name": "Code Command (Claude Code Integration)",
+      "phase": "cli_domain",
+      "order": 6,
+      "estimated_hours": 2,
+      "file": "internal/cli/code.go",
+      "test_file": "internal/cli/code_test.go",
+      "description": "Claude Code integration with environment variable setup",
+      "tdd_steps": [
+        {
+          "step": "stub",
+          "description": "Create code command struct, RunE function signature",
+          "acceptance": "Code compiles, command registered"
+        },
+        {
+          "step": "test",
+          "description": "Write tests for environment setup, process spawning, daemon check, error handling",
+          "acceptance": "Tests written for success and error cases"
+        },
+        {
+          "step": "implement",
+          "description": "Implement Claude Code launch: check daemon, set env vars, exec 'claude' command",
+          "acceptance": "Tests pass, 'openrouter-cc code' launches Claude Code"
+        },
+        {
+          "step": "refactor",
+          "description": "Extract environment setup, improve error messages, clean up exec logic",
+          "acceptance": "Tests pass, integration smooth"
+        }
       ],
-      "effort_hours": 2,
-      "code_example": "cmd := exec.Command(\"claude\"); cmd.Env = append(os.Environ(), \"ANTHROPIC_BASE_URL=\"+proxyURL)"
+      "dependencies": ["daemon_process", "cli_root"],
+      "acceptance_criteria": [
+        "Code command registered with root command",
+        "Checks if daemon running before launching (via daemon.GetStatus)",
+        "Sets ANTHROPIC_API_KEY=dummy in environment",
+        "Sets ANTHROPIC_BASE_URL=http://localhost:{port}/v1 from daemon state",
+        "Executes 'claude' command with inherited environment",
+        "Returns claude command's exit status",
+        "Returns error if daemon not running",
+        "Returns error if 'claude' not found in PATH",
+        "Helpful error message with suggestion to start daemon"
+      ],
+      "integration_points": [
+        "internal/daemon.GetStatus() for daemon check",
+        "os/exec.Command for process spawning"
+      ]
+    }
+  },
+  "implementation_order": [
+    "daemon_state",
+    "daemon_process",
+    "daemon_logging",
+    "cli_root",
+    "cli_start",
+    "cli_stop",
+    "cli_status",
+    "cli_logs",
+    "cli_code"
+  ],
+  "testing_strategy": {
+    "unit_tests": {
+      "description": "TDD approach with tests written before implementation for each task",
+      "coverage_target": "90%",
+      "focus_areas": [
+        "State persistence and validation",
+        "Process lifecycle management",
+        "Log rotation logic",
+        "Command flag parsing",
+        "Error handling and edge cases"
+      ]
     },
-    {
-      "id": "I001",
-      "category": "integration",
-      "name": "Main Function Refactor",
-      "description": "Refactor main() to use Cobra while preserving backward compatibility",
-      "dependencies": ["C001", "C002", "C003", "C004", "C005"],
-      "deliverables": [
-        "Cobra command setup in main()",
-        "Persistent flags for all existing options",
-        "Legacy mode detection (no subcommand = server mode)",
-        "Config loading integration"
-      ],
-      "effort_hours": 4,
-      "backward_compatibility": "Running 'openrouter-cc -port 9000' continues to work"
+    "integration_tests": {
+      "description": "End-to-end workflows testing domain interactions",
+      "scenarios": [
+        "Full daemon lifecycle: start → status → logs → stop",
+        "Backward compatibility: legacy CLI flags still work",
+        "Claude Code integration: code command with environment setup",
+        "Error recovery: handling failures and cleanup",
+        "Cross-platform: process management on Linux/macOS/Windows"
+      ]
     },
+    "performance_tests": {
+      "description": "Validate performance characteristics",
+      "targets": [
+        "CLI command response time <10ms (instant)",
+        "Daemon startup time <1s (process fork to HTTP listening)",
+        "Proxy request overhead <1ms (transformation latency)",
+        "Memory overhead <500KB for daemon management",
+        "No HTTP proxy performance regression"
+      ]
+    }
+  },
+  "dependencies_external": [
     {
-      "id": "I002", 
-      "category": "integration",
-      "name": "Server Mode Enhancement",
-      "description": "Extract server logic for reuse by daemon mode",
-      "dependencies": ["I001"],
-      "deliverables": [
-        "startServer() function extraction",
-        "Signal handling for graceful shutdown",
-        "PID file management in server mode",
-        "Enhanced logging"
-      ],
-      "effort_hours": 2,
-      "code_example": "func startServer() { setupSignals(); http.ListenAndServe() }"
-    },
-    {
-      "id": "T001",
-      "category": "integration", 
-      "name": "Comprehensive Testing",
-      "description": "Add comprehensive tests for all functionality",
-      "dependencies": ["I002"],
-      "deliverables": [
-        "Unit tests for all functions",
-        "Integration tests for CLI commands", 
-        "Cross-platform testing",
-        "Backward compatibility tests"
-      ],
-      "effort_hours": 2,
-      "coverage_target": ">90%"
+      "package": "github.com/spf13/cobra",
+      "version": "^1.8.0",
+      "purpose": "CLI framework for command structure and flag parsing"
     }
   ],
-  "implementation_phases": [
+  "dependencies_internal": [
     {
-      "phase": 1,
-      "name": "Foundation",
-      "tasks": ["F001", "F002"],
-      "duration": "Day 1"
+      "package": "internal/config",
+      "usage": "Configuration loading and management"
     },
     {
-      "phase": 2, 
-      "name": "Core Functions",
-      "tasks": ["P001", "P002", "P003"],
-      "duration": "Day 2-3"
+      "package": "internal/server",
+      "usage": "HTTP server creation and management"
     },
     {
-      "phase": 3,
-      "name": "CLI Commands", 
-      "tasks": ["C001", "C002", "C003", "C004", "C005"],
-      "duration": "Day 4-5"
-    },
-    {
-      "phase": 4,
-      "name": "Integration",
-      "tasks": ["I001", "I002", "T001"],
-      "duration": "Day 6"
+      "package": "internal/util",
+      "usage": "File operations, process checks, path resolution"
     }
   ],
-  "key_benefits": [
-    "Professional CLI with standard Cobra patterns",
-    "Simple function-based implementation (not over-engineered)",
-    "36 hours total (very reasonable)",
-    "100% backward compatibility",
-    "Single external dependency (Cobra)",
-    "Follows Go community standards"
+  "backward_compatibility": {
+    "requirements": [
+      "All existing CLI flags work identically",
+      "Default behavior (no subcommand) starts server in foreground",
+      "Configuration file formats unchanged",
+      "HTTP API endpoints unchanged"
+    ],
+    "validation": [
+      "Integration tests for legacy usage patterns",
+      "Flag precedence verification",
+      "Configuration loading compatibility"
+    ]
+  },
+  "success_criteria": [
+    "All 9 tasks completed with passing tests",
+    "100% backward compatibility maintained",
+    "Cross-platform functionality verified",
+    "Performance targets met",
+    "Documentation updated with examples"
   ]
 }

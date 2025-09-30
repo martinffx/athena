@@ -1,0 +1,613 @@
+{
+  "phases": {
+    "p1_core_entities": {
+      "name": "Core Data Structures and Types",
+      "dependencies": [],
+      "tasks": [
+        "task_001_anthropic_types",
+        "task_002_openai_types",
+        "task_003_content_block",
+        "task_004_config_entity"
+      ],
+      "status": "completed",
+      "description": "Define all core data structures for request/response handling"
+    },
+    "p2_transformation_service": {
+      "name": "Transformation Service Implementation",
+      "dependencies": ["p1_core_entities"],
+      "tasks": [
+        "task_005_anthropic_to_openai",
+        "task_006_openai_to_anthropic",
+        "task_007_model_mapper",
+        "task_008_schema_cleaner",
+        "task_009_tool_validator"
+      ],
+      "status": "completed",
+      "description": "Core transformation logic for bidirectional API translation"
+    },
+    "p3_config_service": {
+      "name": "Configuration Management",
+      "dependencies": ["p1_core_entities"],
+      "tasks": [
+        "task_010_config_loader",
+        "task_011_env_parser",
+        "task_012_file_searcher",
+        "task_013_priority_merger"
+      ],
+      "status": "completed",
+      "description": "Multi-source configuration loading and priority resolution"
+    },
+    "p4_streaming_service": {
+      "name": "Streaming Service Implementation",
+      "dependencies": ["p1_core_entities", "p2_transformation_service"],
+      "tasks": [
+        "task_014_sse_parser",
+        "task_015_event_transformer",
+        "task_016_state_tracker",
+        "task_017_buffer_manager",
+        "task_018_event_emitter"
+      ],
+      "status": "completed",
+      "description": "SSE event processing and streaming response handling"
+    },
+    "p5_http_router": {
+      "name": "HTTP Router and Handlers",
+      "dependencies": ["p2_transformation_service", "p3_config_service", "p4_streaming_service"],
+      "tasks": [
+        "task_019_messages_handler",
+        "task_020_health_handler",
+        "task_021_error_handler",
+        "task_022_request_validator",
+        "task_023_proxy_client"
+      ],
+      "status": "completed",
+      "description": "HTTP server setup, request routing, and handler implementation"
+    },
+    "p6_integration": {
+      "name": "Integration and Testing",
+      "dependencies": ["p5_http_router"],
+      "tasks": [
+        "task_024_main_entry",
+        "task_025_integration_tests",
+        "task_026_streaming_tests",
+        "task_027_error_tests",
+        "task_028_performance_tests"
+      ],
+      "status": "completed",
+      "description": "Complete integration, comprehensive testing, and performance validation"
+    }
+  },
+  "tasks": {
+    "task_001_anthropic_types": {
+      "phase": "p1_core_entities",
+      "order": 1,
+      "description": "Define AnthropicRequest and AnthropicResponse types with proper JSON tags",
+      "tdd_steps": ["test", "implement", "refactor"],
+      "status": "completed",
+      "implementation_file": "internal/transform/types.go",
+      "components": [
+        "AnthropicRequest struct with model, messages, system, tools fields",
+        "AnthropicResponse struct with id, content, usage fields",
+        "Message struct supporting Anthropic format",
+        "Tool definitions for function calling"
+      ]
+    },
+    "task_002_openai_types": {
+      "phase": "p1_core_entities",
+      "order": 2,
+      "description": "Define OpenAI/OpenRouter request and response types",
+      "tdd_steps": ["test", "implement", "refactor"],
+      "status": "completed",
+      "implementation_file": "internal/transform/types.go",
+      "components": [
+        "OpenAIRequest struct with proper field mapping",
+        "OpenAIMessage struct with role, content, tool_calls",
+        "OpenAIResponse struct for chat completions",
+        "ToolCall and Function types"
+      ]
+    },
+    "task_003_content_block": {
+      "phase": "p1_core_entities",
+      "order": 3,
+      "description": "Implement ContentBlock type for flexible content handling",
+      "tdd_steps": ["test", "implement", "refactor"],
+      "status": "completed",
+      "implementation_file": "internal/transform/types.go",
+      "components": [
+        "ContentBlock interface for polymorphic content",
+        "Support for text, tool_use, tool_result types",
+        "JSON marshaling/unmarshaling with type discrimination",
+        "Multi-modal content support (images)"
+      ]
+    },
+    "task_004_config_entity": {
+      "phase": "p1_core_entities",
+      "order": 4,
+      "description": "Define Config struct with all configuration parameters",
+      "tdd_steps": ["test", "implement", "refactor"],
+      "status": "completed",
+      "implementation_file": "internal/config/config.go",
+      "components": [
+        "Config struct with port, base_url, api_key fields",
+        "Model mapping fields (opus_model, sonnet_model, haiku_model)",
+        "Default values and validation rules"
+      ]
+    },
+    "task_005_anthropic_to_openai": {
+      "phase": "p2_transformation_service",
+      "order": 5,
+      "description": "Implement AnthropicToOpenAI transformation function",
+      "tdd_steps": ["test", "implement", "refactor"],
+      "status": "completed",
+      "implementation_file": "internal/transform/transform.go",
+      "dependencies": ["task_001_anthropic_types", "task_002_openai_types"],
+      "components": [
+        "System message extraction and positioning",
+        "Message array transformation",
+        "Content normalization (string to blocks)",
+        "Tool definition conversion"
+      ]
+    },
+    "task_006_openai_to_anthropic": {
+      "phase": "p2_transformation_service",
+      "order": 6,
+      "description": "Implement OpenAIToAnthropic response transformation",
+      "tdd_steps": ["test", "implement", "refactor"],
+      "status": "completed",
+      "implementation_file": "internal/transform/transform.go",
+      "dependencies": ["task_001_anthropic_types", "task_002_openai_types"],
+      "components": [
+        "Response structure conversion",
+        "Token usage mapping (prompt_tokens → input_tokens)",
+        "Content block generation",
+        "Tool result formatting"
+      ]
+    },
+    "task_007_model_mapper": {
+      "phase": "p2_transformation_service",
+      "order": 7,
+      "description": "Implement MapModel function for dynamic model resolution",
+      "tdd_steps": ["test", "implement", "refactor"],
+      "status": "completed",
+      "implementation_file": "internal/transform/transform.go",
+      "dependencies": ["task_004_config_entity"],
+      "components": [
+        "Pattern matching for opus/sonnet/haiku",
+        "Config-driven model mapping",
+        "OpenRouter prefix addition",
+        "Pass-through for explicit model IDs"
+      ]
+    },
+    "task_008_schema_cleaner": {
+      "phase": "p2_transformation_service",
+      "order": 8,
+      "description": "Implement removeUriFormat for JSON schema cleaning",
+      "tdd_steps": ["test", "implement", "refactor"],
+      "status": "completed",
+      "implementation_file": "internal/transform/transform.go",
+      "components": [
+        "Recursive JSON processing",
+        "Format: uri property removal",
+        "Schema structure preservation",
+        "Error-tolerant parsing"
+      ]
+    },
+    "task_009_tool_validator": {
+      "phase": "p2_transformation_service",
+      "order": 9,
+      "description": "Implement validateToolCalls for tool usage validation",
+      "tdd_steps": ["test", "implement", "refactor"],
+      "status": "completed",
+      "implementation_file": "internal/transform/transform.go",
+      "dependencies": ["task_001_anthropic_types"],
+      "components": [
+        "Tool call ID matching",
+        "Tool result validation",
+        "Error reporting for mismatches",
+        "Support for multiple tool calls"
+      ]
+    },
+    "task_010_config_loader": {
+      "phase": "p3_config_service",
+      "order": 10,
+      "description": "Implement loadConfig function with multi-source support",
+      "tdd_steps": ["test", "implement", "refactor"],
+      "status": "completed",
+      "implementation_file": "internal/config/config.go",
+      "dependencies": ["task_004_config_entity"],
+      "components": [
+        "Priority-based config merging",
+        "CLI flag parsing",
+        "Default value initialization",
+        "Validation logic"
+      ]
+    },
+    "task_011_env_parser": {
+      "phase": "p3_config_service",
+      "order": 11,
+      "description": "Implement environment variable parsing",
+      "tdd_steps": ["test", "implement", "refactor"],
+      "status": "completed",
+      "implementation_file": "internal/config/config.go",
+      "dependencies": ["task_004_config_entity"],
+      "components": [
+        "Environment variable mapping",
+        "Type conversion for numeric values",
+        ".env file support",
+        "Variable name conventions"
+      ]
+    },
+    "task_012_file_searcher": {
+      "phase": "p3_config_service",
+      "order": 12,
+      "description": "Implement config file search in standard paths",
+      "tdd_steps": ["test", "implement", "refactor"],
+      "status": "completed",
+      "implementation_file": "internal/config/config.go",
+      "components": [
+        "Path resolution (~/.config expansion)",
+        "File existence checking",
+        "Support for YAML and JSON",
+        "Search order implementation"
+      ]
+    },
+    "task_013_priority_merger": {
+      "phase": "p3_config_service",
+      "order": 13,
+      "description": "Implement priority-based config merging logic",
+      "tdd_steps": ["test", "implement", "refactor"],
+      "status": "completed",
+      "implementation_file": "internal/config/config.go",
+      "dependencies": ["task_010_config_loader", "task_011_env_parser", "task_012_file_searcher"],
+      "components": [
+        "Non-destructive merging (only empty values)",
+        "Priority order enforcement",
+        "Conflict resolution",
+        "Final validation"
+      ]
+    },
+    "task_014_sse_parser": {
+      "phase": "p4_streaming_service",
+      "order": 14,
+      "description": "Implement SSE line parsing for OpenAI events",
+      "tdd_steps": ["test", "implement", "refactor"],
+      "status": "completed",
+      "implementation_file": "internal/transform/transform.go",
+      "components": [
+        "Line-by-line SSE processing",
+        "Event data extraction",
+        "JSON parsing of delta events",
+        "Error handling for malformed events"
+      ]
+    },
+    "task_015_event_transformer": {
+      "phase": "p4_streaming_service",
+      "order": 15,
+      "description": "Transform OpenAI streaming events to Anthropic format",
+      "tdd_steps": ["test", "implement", "refactor"],
+      "status": "completed",
+      "implementation_file": "internal/transform/transform.go",
+      "dependencies": ["task_014_sse_parser", "task_001_anthropic_types"],
+      "components": [
+        "Delta to Anthropic event conversion",
+        "Content block event generation",
+        "Message event generation",
+        "Event type mapping"
+      ]
+    },
+    "task_016_state_tracker": {
+      "phase": "p4_streaming_service",
+      "order": 16,
+      "description": "Implement streaming state machine for event ordering",
+      "tdd_steps": ["test", "implement", "refactor"],
+      "status": "completed",
+      "implementation_file": "internal/transform/transform.go",
+      "components": [
+        "Message started/stopped flags",
+        "Block started/stopped tracking",
+        "Content block index management",
+        "Token count accumulation"
+      ]
+    },
+    "task_017_buffer_manager": {
+      "phase": "p4_streaming_service",
+      "order": 17,
+      "description": "Implement buffering for incomplete SSE lines",
+      "tdd_steps": ["test", "implement", "refactor"],
+      "status": "completed",
+      "implementation_file": "internal/transform/transform.go",
+      "components": [
+        "Line buffer for partial data",
+        "Complete line detection",
+        "Buffer flushing logic",
+        "Memory-efficient buffering"
+      ]
+    },
+    "task_018_event_emitter": {
+      "phase": "p4_streaming_service",
+      "order": 18,
+      "description": "Implement Anthropic SSE event emission",
+      "tdd_steps": ["test", "implement", "refactor"],
+      "status": "completed",
+      "implementation_file": "internal/transform/transform.go",
+      "dependencies": ["task_015_event_transformer"],
+      "components": [
+        "SSE format generation",
+        "Event serialization",
+        "Response writer flushing",
+        "Connection keep-alive"
+      ]
+    },
+    "task_019_messages_handler": {
+      "phase": "p5_http_router",
+      "order": 19,
+      "description": "Implement /v1/messages endpoint handler",
+      "tdd_steps": ["test", "implement", "refactor"],
+      "status": "completed",
+      "implementation_file": "cmd/athena/main.go",
+      "dependencies": ["task_005_anthropic_to_openai", "task_006_openai_to_anthropic", "task_022_request_validator"],
+      "components": [
+        "Request body parsing",
+        "Streaming vs non-streaming detection",
+        "Transformation pipeline invocation",
+        "Response writing"
+      ]
+    },
+    "task_020_health_handler": {
+      "phase": "p5_http_router",
+      "order": 20,
+      "description": "Implement /health endpoint for monitoring",
+      "tdd_steps": ["test", "implement", "refactor"],
+      "status": "completed",
+      "implementation_file": "cmd/athena/main.go",
+      "components": [
+        "Status information gathering",
+        "Version reporting",
+        "Uptime calculation",
+        "Request metrics"
+      ]
+    },
+    "task_021_error_handler": {
+      "phase": "p5_http_router",
+      "order": 21,
+      "description": "Implement error handling and response formatting",
+      "tdd_steps": ["test", "implement", "refactor"],
+      "status": "completed",
+      "implementation_file": "cmd/athena/main.go",
+      "components": [
+        "Error type mapping",
+        "Anthropic error format generation",
+        "HTTP status code mapping",
+        "Detailed error messages"
+      ]
+    },
+    "task_022_request_validator": {
+      "phase": "p5_http_router",
+      "order": 22,
+      "description": "Validate requests for unsupported features",
+      "tdd_steps": ["test", "implement", "refactor"],
+      "status": "completed",
+      "implementation_file": "cmd/athena/main.go",
+      "dependencies": ["task_001_anthropic_types"],
+      "components": [
+        "Feature detection (thinking, caching, batch)",
+        "Early rejection logic",
+        "Clear error messages",
+        "Request structure validation"
+      ]
+    },
+    "task_023_proxy_client": {
+      "phase": "p5_http_router",
+      "order": 23,
+      "description": "Implement HTTP client for OpenRouter communication",
+      "tdd_steps": ["test", "implement", "refactor"],
+      "status": "completed",
+      "implementation_file": "cmd/athena/main.go",
+      "components": [
+        "HTTP client configuration",
+        "Request forwarding",
+        "Header propagation",
+        "Timeout handling"
+      ]
+    },
+    "task_024_main_entry": {
+      "phase": "p6_integration",
+      "order": 24,
+      "description": "Implement main entry point with server initialization",
+      "tdd_steps": ["test", "implement", "refactor"],
+      "status": "completed",
+      "implementation_file": "cmd/athena/main.go",
+      "dependencies": ["task_010_config_loader", "task_019_messages_handler", "task_020_health_handler"],
+      "components": [
+        "Config loading orchestration",
+        "HTTP server setup",
+        "Route registration",
+        "Graceful shutdown"
+      ]
+    },
+    "task_025_integration_tests": {
+      "phase": "p6_integration",
+      "order": 25,
+      "description": "Comprehensive integration tests for full request/response cycles",
+      "tdd_steps": ["test", "implement", "refactor"],
+      "status": "completed",
+      "implementation_file": "internal/transform/transform_test.go",
+      "components": [
+        "End-to-end request transformation tests",
+        "Response transformation tests",
+        "Tool calling scenarios",
+        "Multi-modal content tests"
+      ]
+    },
+    "task_026_streaming_tests": {
+      "phase": "p6_integration",
+      "order": 26,
+      "description": "Test streaming SSE event processing",
+      "tdd_steps": ["test", "implement", "refactor"],
+      "status": "completed",
+      "implementation_file": "internal/transform/transform_test.go",
+      "dependencies": ["task_014_sse_parser", "task_015_event_transformer", "task_016_state_tracker"],
+      "components": [
+        "SSE parsing tests",
+        "Event ordering validation",
+        "State transition tests",
+        "Buffer handling tests"
+      ]
+    },
+    "task_027_error_tests": {
+      "phase": "p6_integration",
+      "order": 27,
+      "description": "Test error scenarios and edge cases",
+      "tdd_steps": ["test", "implement", "refactor"],
+      "status": "completed",
+      "implementation_file": "internal/transform/transform_test.go",
+      "components": [
+        "Invalid request handling",
+        "Unsupported feature detection",
+        "Malformed response handling",
+        "Network error scenarios"
+      ]
+    },
+    "task_028_performance_tests": {
+      "phase": "p6_integration",
+      "order": 28,
+      "description": "Performance benchmarks and optimization validation",
+      "tdd_steps": ["test", "implement", "refactor"],
+      "status": "completed",
+      "implementation_file": "internal/transform/transform_test.go",
+      "components": [
+        "Transformation latency benchmarks",
+        "Memory allocation profiling",
+        "Throughput testing",
+        "Streaming performance validation"
+      ]
+    }
+  },
+  "implementation_status": "production-ready",
+  "note": "This plan documents the existing production implementation retrospectively. All tasks are marked as completed since the feature is fully operational. The task breakdown follows domain-driven organization: Entities → Services → Router, with no Repository layer needed for this stateless proxy. The implementation uses Go's standard library exclusively with no external dependencies.",
+  "metrics": {
+    "total_tasks": 28,
+    "completed_tasks": 28,
+    "phases": 6,
+    "completion_percentage": 100
+  },
+  "architecture_notes": {
+    "pattern": "Stateless HTTP Proxy with Transformation Layer",
+    "layers": [
+      "HTTP Router (request handling and routing)",
+      "Services (transformation, streaming, configuration)",
+      "Entities (data structures and types)"
+    ],
+    "no_repository": "No database/persistence layer required for stateless proxy",
+    "key_design_choices": [
+      "Single binary with zero external dependencies",
+      "Functional transformation approach for testability",
+      "Configuration-driven model mapping for flexibility",
+      "Strict API compatibility for seamless integration"
+    ]
+  },
+  "execution_strategy": {
+    "critical_path": "P1 → P2 → P4 → P5 → P6",
+    "critical_path_description": "Core entities must be defined first, then transformation logic, streaming (depends on transformation), HTTP routing (depends on all services), and finally integration testing",
+    "parallel_execution_opportunities": {
+      "phase_level": {
+        "p2_and_p3": {
+          "phases": ["p2_transformation_service", "p3_config_service"],
+          "rationale": "Both only depend on P1 entities; no interdependencies between transformation and config services",
+          "time_savings": "~25% reduction by parallelizing these phases"
+        }
+      },
+      "task_level": {
+        "p1_parallel_group_a": {
+          "tasks": ["task_001_anthropic_types", "task_002_openai_types"],
+          "rationale": "Independent data structure definitions can be written simultaneously"
+        },
+        "p2_parallel_group_a": {
+          "tasks": ["task_005_anthropic_to_openai", "task_006_openai_to_anthropic"],
+          "rationale": "Bidirectional transformations can be developed in parallel"
+        },
+        "p2_parallel_group_b": {
+          "tasks": ["task_007_model_mapper", "task_008_schema_cleaner", "task_009_tool_validator"],
+          "rationale": "Utility functions are independent and can be parallelized"
+        },
+        "p3_parallel_group_a": {
+          "tasks": ["task_011_env_parser", "task_012_file_searcher"],
+          "rationale": "Config parsers can be developed independently"
+        },
+        "p5_parallel_group_a": {
+          "tasks": ["task_019_messages_handler", "task_020_health_handler", "task_021_error_handler"],
+          "rationale": "HTTP handlers are independent routing endpoints"
+        }
+      }
+    },
+    "optimal_agent_allocation": {
+      "three_agent_strategy": {
+        "agent_1": {
+          "focus": "Critical path - Transformation and Streaming",
+          "phases": ["P1 (partial)", "P2", "P4"],
+          "rationale": "Handles the most complex logic and maintains continuity"
+        },
+        "agent_2": {
+          "focus": "Configuration and HTTP Router",
+          "phases": ["P1 (partial)", "P3", "P5"],
+          "rationale": "Manages supporting infrastructure in parallel"
+        },
+        "agent_3": {
+          "focus": "Testing and Integration",
+          "phases": ["P6 (starting early with unit tests)"],
+          "rationale": "Writes tests in parallel with implementation for continuous validation"
+        }
+      },
+      "two_agent_strategy": {
+        "agent_1": {
+          "focus": "Core transformation pipeline",
+          "phases": ["P1", "P2", "P4", "P5 (partial)"]
+        },
+        "agent_2": {
+          "focus": "Configuration and testing",
+          "phases": ["P1 (parallel)", "P3", "P5 (partial)", "P6"]
+        }
+      }
+    },
+    "time_estimates": {
+      "sequential_execution": "~16 hours (all phases done serially)",
+      "two_phase_parallel": "~12 hours (P2 and P3 in parallel, 25% reduction)",
+      "three_agent_optimized": "~8 hours (optimal parallelization, 50% reduction)",
+      "breakdown": {
+        "p1_core_entities": "2 hours",
+        "p2_transformation_service": "3 hours",
+        "p3_config_service": "2 hours (parallel with P2)",
+        "p4_streaming_service": "3 hours",
+        "p5_http_router": "2 hours",
+        "p6_integration": "4 hours"
+      }
+    },
+    "dependency_validation": {
+      "valid_dependencies": [
+        "Entity types before service logic",
+        "Services before routers",
+        "All components before integration tests",
+        "Config entity before config service",
+        "Transformation logic before streaming service"
+      ],
+      "optimization_notes": [
+        "Health and error handlers (P5) could start earlier as they don't require streaming service",
+        "Integration test writing can begin as soon as entity interfaces are defined",
+        "Model mapper depends on config entity but could benefit from transformation context"
+      ]
+    },
+    "risk_mitigation": {
+      "interface_contracts": "Define clear interfaces between phases early to enable parallel development",
+      "integration_testing": "Start integration tests early to catch interface mismatches",
+      "performance_monitoring": "Benchmark throughout implementation, not just at the end",
+      "feature_flags": "Use flags to deploy partially complete features safely"
+    },
+    "lessons_for_future_projects": [
+      "Start with parallel entity definition using multiple agents",
+      "Split transformation and config work immediately after entities",
+      "Implement monitoring endpoints early for testing infrastructure",
+      "Write integration tests as soon as entity interfaces are defined",
+      "Use TDD throughout to catch issues early and maintain quality"
+    ]
+  }
+}
