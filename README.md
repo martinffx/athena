@@ -1,12 +1,12 @@
 # Athena
 
 <p align="center">
-  <img src="athena.jpg" alt="Athena" width="200"/>
+  <img src="Athena.png" alt="Athena" width="200"/>
 </p>
 
 > *Athena, ancient Greek goddess associated with wisdom, warfare, and handicraft.*
 
-A proxy server that maps Anthropic's API format to OpenRouter, allowing you to use Claude Code with OpenRouter's vast selection of AI models.
+A proxy server that maps Anthropic's API format to OpenAI API format, allowing you to use Claude Code with OpenRouter's vast selection of AI models.
 
 ## Features
 
