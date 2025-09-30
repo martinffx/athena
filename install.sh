@@ -1,12 +1,12 @@
 #!/bin/bash
 
-# OpenRouter CC Install Script
-# Downloads and installs the latest release of openrouter-cc
+# Athena Install Script
+# Downloads and installs the latest release of athena
 
 set -e
 
 # Configuration
-REPO="martinrichards/openrouter-cc"  # Update with your actual repo
+REPO="martinffx/athena"
 INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/bin}"
 LATEST_URL="https://api.github.com/repos/$REPO/releases/latest"
 
@@ -108,19 +108,19 @@ get_download_url() {
 }
 
 main() {
-    log "OpenRouter CC Installer"
-    
+    log "Athena Installer"
+
     # Detect platform
     PLATFORM=$(detect_platform)
     log "Detected platform: $PLATFORM"
-    
+
     # Determine filenames
     if [[ "$PLATFORM" == *"windows"* ]]; then
-        BINARY_NAME="openrouter-cc-${PLATFORM}.exe"
-        WRAPPER_NAME="openrouter-${PLATFORM}.bat"
+        BINARY_NAME="athena-${PLATFORM}.exe"
+        WRAPPER_NAME="athena-wrapper-${PLATFORM}.bat"
     else
-        BINARY_NAME="openrouter-cc-${PLATFORM}"
-        WRAPPER_NAME="openrouter-${PLATFORM}"
+        BINARY_NAME="athena-${PLATFORM}"
+        WRAPPER_NAME="athena-wrapper-${PLATFORM}"
     fi
     
     # Create install directory
@@ -146,21 +146,21 @@ main() {
     if [[ -z "$BINARY_URL" ]]; then
         error "Could not find binary download URL for platform: $PLATFORM"
         error "Available files:"
-        echo "$RELEASE_JSON" | grep -o '"name": *"[^"]*"' | cut -d'"' -f4 | grep -E "(openrouter-cc|openrouter-)" | sort
+        echo "$RELEASE_JSON" | grep -o '"name": *"[^"]*"' | cut -d'"' -f4 | grep -E "(athena-|athena-wrapper-)" | sort
         exit 1
     fi
-    
+
     # Download binary
-    BINARY_PATH="$INSTALL_DIR/openrouter-cc"
+    BINARY_PATH="$INSTALL_DIR/athena"
     download_file "$BINARY_URL" "$BINARY_PATH"
     chmod +x "$BINARY_PATH"
-    
+
     # Download wrapper script if available
     if [[ -n "$WRAPPER_URL" ]]; then
         if [[ "$PLATFORM" == *"windows"* ]]; then
-            WRAPPER_PATH="$INSTALL_DIR/openrouter.bat"
+            WRAPPER_PATH="$INSTALL_DIR/athena-wrapper.bat"
         else
-            WRAPPER_PATH="$INSTALL_DIR/openrouter"
+            WRAPPER_PATH="$INSTALL_DIR/athena-wrapper"
         fi
         download_file "$WRAPPER_URL" "$WRAPPER_PATH"
         chmod +x "$WRAPPER_PATH" 2>/dev/null || true
@@ -171,14 +171,14 @@ main() {
     
     # Download example configs
     CONFIG_URLS=(
-        "$(get_download_url "$RELEASE_JSON" "openrouter.example.yml")"
-        "$(get_download_url "$RELEASE_JSON" "openrouter.example.json")"
+        "$(get_download_url "$RELEASE_JSON" "athena.example.yml")"
+        "$(get_download_url "$RELEASE_JSON" "athena.example.json")"
         "$(get_download_url "$RELEASE_JSON" ".env.example")"
     )
-    
-    CONFIG_DIR="$HOME/.config/openrouter-cc"
+
+    CONFIG_DIR="$HOME/.config/athena"
     mkdir -p "$CONFIG_DIR"
-    
+
     for url in "${CONFIG_URLS[@]}"; do
         if [[ -n "$url" ]]; then
             filename=$(basename "$url")
@@ -198,9 +198,9 @@ main() {
     success "Installation complete!"
     echo
     log "Next steps:"
-    echo "1. Copy example config: cp $CONFIG_DIR/openrouter.example.yml $CONFIG_DIR/openrouter.yml"
+    echo "1. Copy example config: cp $CONFIG_DIR/athena.example.yml $CONFIG_DIR/athena.yml"
     echo "2. Edit config with your OpenRouter API key"
-    echo "3. Run: openrouter-cc (server only) or openrouter (server + Claude Code)"
+    echo "3. Run: athena (server only) or athena-wrapper (server + Claude Code)"
     echo
     log "For more information, see: https://github.com/$REPO"
 }
@@ -213,7 +213,7 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
         --help|-h)
-            echo "OpenRouter CC Install Script"
+            echo "Athena Install Script"
             echo
             echo "Usage: $0 [options]"
             echo

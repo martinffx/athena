@@ -15,70 +15,32 @@ jobs:
       uses: actions/checkout@v4
 
     - name: Set up Go
-      uses: actions/setup-go@v4
+      uses: actions/setup-go@v5
       with:
-        go-version: '1.21'
+        go-version: '1.24.x'
+        cache: true  # Enable automatic caching
 
-    - name: Cache Go modules
-      uses: actions/cache@v3
-      with:
-        path: |
-          ~/.cache/go-build
-          ~/go/pkg/mod
-        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-        restore-keys: |
-          ${{ runner.os }}-go-
-
-    - name: Download dependencies
-      run: go mod download
-
-    - name: Run go fmt check
+    - name: Run format check
       run: |
-        if [ "$(gofmt -s -l . | wc -l)" -gt 0 ]; then
-          echo "❌ Code is not formatted. Run 'make fmt' to fix:"
-          gofmt -s -l .
-          echo ""
-          echo "Diff:"
-          gofmt -s -d .
+        make format
+        if ! git diff --quiet; then
+          echo "❌ Code is not formatted. Run 'make format' to fix:"
+          git diff
           exit 1
         fi
-        echo "✅ Code is properly formatted"
+        echo "✅ Code is properly formatted and tidy"
 
-    - name: Run go mod tidy check
-      run: |
-        go mod tidy
-        if ! git diff --quiet go.mod go.sum; then
-          echo "❌ go.mod or go.sum is not tidy. Run 'go mod tidy' to fix"
-          git diff go.mod go.sum
-          exit 1
-        fi
-        echo "✅ go.mod and go.sum are tidy"
-
-    - name: Run go vet
-      run: |
-        echo "🔍 Running go vet..."
-        go vet ./...
-        echo "✅ go vet passed"
-
-    - name: Run golangci-lint
+    - name: Run linting
       uses: golangci/golangci-lint-action@v3
       with:
         version: latest
         args: --timeout=5m --verbose
 
-    - name: Run tests
-      run: |
-        echo "🧪 Running tests..."
-        go test -v -race -coverprofile=coverage.out ./...
-        echo "✅ Tests passed"
-
-    - name: Generate coverage report
-      run: |
-        go tool cover -html=coverage.out -o coverage.html
-        go tool cover -func=coverage.out
+    - name: Run tests with coverage
+      run: make test-coverage
 
     - name: Upload coverage reports
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: coverage-reports
         path: |
@@ -88,9 +50,95 @@ jobs:
     - name: Test build
       run: |
         echo "🔨 Testing build..."
-        go build -v -ldflags="-s -w" -o openrouter-cc-test main.go
-        ./openrouter-cc-test --help > /dev/null
+        make build
+        ./athena --help > /dev/null
         echo "✅ Build successful"
+
+    - name: Check binary size
+      run: |
+        BINARY_SIZE=$(stat -f%z athena 2>/dev/null || stat -c%s athena)
+        echo "📦 Binary size: $(numfmt --to=iec-i --suffix=B $BINARY_SIZE 2>/dev/null || echo $BINARY_SIZE bytes)"
+        # Warn if binary exceeds 10MB (Cobra should add <5MB)
+        if [ $BINARY_SIZE -gt 10485760 ]; then
+          echo "⚠️  Warning: Binary size exceeds 10MB threshold"
+          echo "Binary size: $BINARY_SIZE bytes"
+        else
+          echo "✅ Binary size within acceptable limits"
+        fi
+
+  # Test CLI subcommands on multiple platforms
+  cli-tests:
+    runs-on: ${{ matrix.os }}
+    needs: lint-and-test
+
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.24.x'
+        cache: true
+
+    - name: Build binary
+      run: make build
+
+    - name: Test CLI commands (Unix)
+      if: runner.os != 'Windows'
+      run: |
+        echo "🧪 Testing CLI subcommands on ${{ runner.os }}..."
+
+        # Test help
+        ./athena --help
+        ./athena start --help
+        ./athena stop --help
+        ./athena status --help
+        ./athena logs --help
+        ./athena code --help
+
+        # Test version/help flags work
+        ./athena --version || true  # May not have version flag
+
+        echo "✅ CLI commands validated on ${{ runner.os }}"
+
+    - name: Test CLI commands (Windows)
+      if: runner.os == 'Windows'
+      shell: bash
+      run: |
+        echo "🧪 Testing CLI subcommands on Windows..."
+
+        # Test help
+        ./athena.exe --help
+        ./athena.exe start --help
+        ./athena.exe stop --help
+        ./athena.exe status --help
+        ./athena.exe logs --help
+        ./athena.exe code --help
+
+        echo "✅ CLI commands validated on Windows"
+
+    - name: CLI response time benchmark
+      if: runner.os != 'Windows'
+      run: |
+        echo "⏱️  Benchmarking CLI response times..."
+
+        # Test help command response time (<100ms target)
+        TIME_START=$(date +%s%N)
+        ./athena --help > /dev/null
+        TIME_END=$(date +%s%N)
+        ELAPSED_MS=$(( ($TIME_END - $TIME_START) / 1000000 ))
+
+        echo "CLI help command: ${ELAPSED_MS}ms"
+        if [ $ELAPSED_MS -gt 100 ]; then
+          echo "⚠️  Warning: CLI response time exceeded 100ms threshold"
+        else
+          echo "✅ CLI response time within acceptable limits"
+        fi
 
   # Test cross-platform builds (only on main branch)
   cross-platform-build:
@@ -117,9 +165,10 @@ jobs:
       uses: actions/checkout@v4
 
     - name: Set up Go
-      uses: actions/setup-go@v4
+      uses: actions/setup-go@v5
       with:
-        go-version: '1.21'
+        go-version: '1.24.x'
+        cache: true
 
     - name: Build for ${{ matrix.goos }}-${{ matrix.goarch }}
       env:
@@ -129,9 +178,9 @@ jobs:
       run: |
         echo "🔨 Building for ${{ matrix.goos }}-${{ matrix.goarch }}..."
         if [ "$GOOS" = "windows" ]; then
-          go build -ldflags="-s -w" -o openrouter-cc-${{ matrix.goos }}-${{ matrix.goarch }}.exe main.go
+          go build -ldflags="-s -w" -o athena-${{ matrix.goos }}-${{ matrix.goarch }}.exe ./cmd/athena
         else
-          go build -ldflags="-s -w" -o openrouter-cc-${{ matrix.goos }}-${{ matrix.goarch }} main.go
+          go build -ldflags="-s -w" -o athena-${{ matrix.goos }}-${{ matrix.goarch }} ./cmd/athena
         fi
         echo "✅ Build successful"
 
@@ -139,22 +188,16 @@ jobs:
   security:
     runs-on: ubuntu-latest
     needs: lint-and-test
-    
+
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
 
     - name: Set up Go
-      uses: actions/setup-go@v4
+      uses: actions/setup-go@v5
       with:
-        go-version: '1.21'
+        go-version: '1.24.x'
+        cache: true
 
-    - name: Run Gosec Security Scanner
-      uses: securecodewarrior/github-action-gosec@master
-      with:
-        args: './...'
-
-    - name: Run govulncheck
-      run: |
-        go install golang.org/x/vuln/cmd/govulncheck@latest
-        govulncheck ./...
+    - name: Run vulnerability check
+      run: make vuln

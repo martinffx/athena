@@ -7,7 +7,11 @@ help: ## Show this help message
 
 # Development commands
 build: ## Build the binary
+ifeq ($(OS),Windows_NT)
+	go build -ldflags="-s -w" -o athena.exe ./cmd/athena
+else
 	go build -ldflags="-s -w" -o athena ./cmd/athena
+endif
 
 test: ## Run tests
 	go test -v ./...
@@ -20,11 +24,15 @@ test-coverage: ## Run tests with coverage
 lint: ## Run linting
 	golangci-lint run
 
+vuln: ## Run vulnerability check
+	go install golang.org/x/vuln/cmd/govulncheck@latest
+	govulncheck ./...
+
 format: ## Format code
 	gofmt -s -w .
 	go mod tidy
 
-check: format lint test ## Run all checks (format, vet, lint, test)
+check: format lint test vuln ## Run all checks (format, lint, test, vuln)
 
 clean: ## Clean build artifacts
 	rm -f athena athena-*
