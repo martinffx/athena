@@ -344,7 +344,7 @@
       "description": "Implement /v1/messages endpoint handler",
       "tdd_steps": ["test", "implement", "refactor"],
       "status": "completed",
-      "implementation_file": "cmd/athena/main.go",
+      "implementation_file": "internal/server/server.go",
       "dependencies": ["task_005_anthropic_to_openai", "task_006_openai_to_anthropic", "task_022_request_validator"],
       "components": [
         "Request body parsing",
@@ -359,7 +359,7 @@
       "description": "Implement /health endpoint for monitoring",
       "tdd_steps": ["test", "implement", "refactor"],
       "status": "completed",
-      "implementation_file": "cmd/athena/main.go",
+      "implementation_file": "internal/server/server.go",
       "components": [
         "Status information gathering",
         "Version reporting",
@@ -373,9 +373,9 @@
       "description": "Implement error handling and response formatting",
       "tdd_steps": ["test", "implement", "refactor"],
       "status": "completed",
-      "implementation_file": "cmd/athena/main.go",
+      "implementation_file": "internal/server/server.go",
       "components": [
-        "Error type mapping",
+        "Error type mapping (embedded in handlers)",
         "Anthropic error format generation",
         "HTTP status code mapping",
         "Detailed error messages"
@@ -387,10 +387,10 @@
       "description": "Validate requests for unsupported features",
       "tdd_steps": ["test", "implement", "refactor"],
       "status": "completed",
-      "implementation_file": "cmd/athena/main.go",
+      "implementation_file": "internal/server/server.go",
       "dependencies": ["task_001_anthropic_types"],
       "components": [
-        "Feature detection (thinking, caching, batch)",
+        "Feature detection (integrated into handlers)",
         "Early rejection logic",
         "Clear error messages",
         "Request structure validation"
@@ -402,7 +402,7 @@
       "description": "Implement HTTP client for OpenRouter communication",
       "tdd_steps": ["test", "implement", "refactor"],
       "status": "completed",
-      "implementation_file": "cmd/athena/main.go",
+      "implementation_file": "internal/server/server.go",
       "components": [
         "HTTP client configuration",
         "Request forwarding",
@@ -416,9 +416,10 @@
       "description": "Implement main entry point with server initialization",
       "tdd_steps": ["test", "implement", "refactor"],
       "status": "completed",
-      "implementation_file": "cmd/athena/main.go",
+      "implementation_file": "cmd/athena/main.go & internal/cli/root.go & internal/server/server.go",
       "dependencies": ["task_010_config_loader", "task_019_messages_handler", "task_020_health_handler"],
       "components": [
+        "Cobra CLI setup",
         "Config loading orchestration",
         "HTTP server setup",
         "Route registration",

@@ -3,11 +3,11 @@ package main
 import (
 	"log"
 
-	"athena/internal/cli"
+	"athena/internal"
 )
 
 func main() {
-	if err := cli.Execute(); err != nil {
+	if err := internal.Execute(); err != nil {
 		log.Fatal(err)
 	}
 }

@@ -48,7 +48,7 @@ OpenRouter CC is a zero-dependency Go proxy server that translates Anthropic API
 
 ### 5. Configuration System
 - **Multi-source loading**: CLI flags → config files → env vars → defaults
-- **Flexible formats**: YAML, JSON, and environment variable support
+- **Flexible formats**: YAML and environment variable support
 - **Runtime override**: Command-line flags take precedence for development
 
 ### 6. Claude Code Integration

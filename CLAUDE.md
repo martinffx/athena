@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Athena is a Go-based HTTP proxy server that translates Anthropic API requests to OpenRouter format, enabling Claude Code to work with OpenRouter's diverse model selection. The application uses only Go's standard library and follows standard Go project layout with `cmd/` and `internal/` packages.
+Athena is a Go-based HTTP proxy server that translates Anthropic API requests to OpenRouter format, enabling Claude Code to work with OpenRouter's diverse model selection. The application uses minimal external dependencies (Cobra CLI framework, YAML parser, log rotation) and follows standard Go project layout with `cmd/` and `internal/` packages.
 
 **Status**: Production-ready with all core features implemented and tested.
 

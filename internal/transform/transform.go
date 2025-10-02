@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -286,11 +286,11 @@ func MapModel(anthropicModel string, cfg *config.Config) string {
 	}
 
 	switch {
-	case strings.Contains(anthropicModel, "haiku"):
+	case strings.Contains(anthropicModel, "haiku") && cfg.HaikuModel != "":
 		return cfg.HaikuModel
-	case strings.Contains(anthropicModel, "sonnet"):
+	case strings.Contains(anthropicModel, "sonnet") && cfg.SonnetModel != "":
 		return cfg.SonnetModel
-	case strings.Contains(anthropicModel, "opus"):
+	case strings.Contains(anthropicModel, "opus") && cfg.OpusModel != "":
 		return cfg.OpusModel
 	default:
 		return cfg.Model // Use default model
@@ -305,11 +305,11 @@ func GetProviderForModel(anthropicModel string, cfg *config.Config) *config.Prov
 	}
 
 	switch {
-	case strings.Contains(anthropicModel, "haiku"):
+	case strings.Contains(anthropicModel, "haiku") && cfg.HaikuModel != "":
 		return cfg.HaikuProvider
-	case strings.Contains(anthropicModel, "sonnet"):
+	case strings.Contains(anthropicModel, "sonnet") && cfg.SonnetModel != "":
 		return cfg.SonnetProvider
-	case strings.Contains(anthropicModel, "opus"):
+	case strings.Contains(anthropicModel, "opus") && cfg.OpusModel != "":
 		return cfg.OpusProvider
 	default:
 		return cfg.DefaultProvider
@@ -434,7 +434,7 @@ func HandleNonStreaming(w http.ResponseWriter, resp *http.Response, modelName st
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(anthropicResp); err != nil {
-		log.Printf("Failed to encode response: %v", err)
+		slog.Error("failed to encode response", "error", err)
 	}
 }
 

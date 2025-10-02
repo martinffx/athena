@@ -7,7 +7,8 @@ A stateless HTTP proxy that translates Anthropic API requests to OpenRouter form
 
 ### Architecture Pattern
 **Stateless HTTP Proxy with Transformation Layer**
-- Single binary with zero external dependencies
+- Single binary with minimal external dependencies (Cobra CLI)
+- Cobra-based command-line interface
 - Configuration-driven model mapping
 - Strict API compatibility
 
@@ -18,29 +19,32 @@ A stateless HTTP proxy that translates Anthropic API requests to OpenRouter form
 
 ### System Architecture Diagram
 ```ascii
-   ┌───────────────┐     ┌───────────────┐     ┌───────────────┐
-   │  Claude Code  │ ──► │  HTTP Server  │ ──► │ Transformer  │
-   └───────────────┘     └───────────────┘     └───────────────┘
-         ▲                                            │
-         │                                            ▼
-         │                                     ┌───────────────┐
-         └─────────────────────────────────────┤  OpenRouter   │
-                    Response                   └───────────────┘
+   ┌───────────────┐     ┌───────────────┐     ┌───────────────┐     ┌───────────────┐
+   │  Claude Code  │ ──► │   Cobra CLI   │ ──► │  HTTP Server  │ ──► │ Transformer  │
+   └───────────────┘     └───────────────┘     └───────────────┘     └───────────────┘
+         ▲                                                                    │
+         │                                                                    ▼
+         │                                                             ┌───────────────┐
+         └─────────────────────────────────────────────────────────────┤  OpenRouter   │
+                                      Response                         └───────────────┘
 ```
 
 ### Request Flow
-1. HTTP Handler receives POST /v1/messages
-2. Validate AnthropicRequest
-3. Transform to OpenAI/OpenRouter format
-4. Forward to upstream API
-5. Transform response back to Anthropic format
-6. Return response to client
+1. CLI entry point (cmd/athena/main.go) invokes Cobra command (internal/cli/root.go)
+2. Server package (internal/server/server.go) handles HTTP requests
+3. HTTP Handler receives POST /v1/messages
+4. Validate AnthropicRequest
+5. Transform to OpenAI/OpenRouter format (internal/transform/transform.go)
+6. Forward to upstream API
+7. Transform response back to Anthropic format
+8. Return response to client
 
 ### Key Components
-- **HTTP Server**: Request routing and handling
-- **Request Transformer**: Format conversion logic
+- **CLI Layer** (`cmd/athena/main.go`, `internal/cli/root.go`): Cobra command setup and configuration
+- **HTTP Server** (`internal/server/server.go`): Request routing and handling
+- **Request Transformer** (`internal/transform/transform.go`): Format conversion logic
 - **Streaming Handler**: SSE event processing
-- **Configuration Manager**: Multi-source config loading
+- **Configuration Manager** (`internal/config/config.go`): Multi-source config loading
 
 ## 3. Domain Model
 
@@ -159,13 +163,13 @@ A stateless HTTP proxy that translates Anthropic API requests to OpenRouter form
 
 ### Sources (Precedence Order)
 1. CLI flags
-2. Config files (`athena.yml`, `athena.json`)
+2. Config files (`athena.yml`)
 3. Environment variables
 4. Built-in defaults
 
 ### Search Paths
-- `~/.config/athena/athena.{yml,json}`
-- `./athena.{yml,json}`
+- `~/.config/athena/athena.yml`
+- `./athena.yml`
 - `./.env`
 
 ### Key Parameters
@@ -191,7 +195,9 @@ A stateless HTTP proxy that translates Anthropic API requests to OpenRouter form
 ## 9. Implementation Notes
 
 ### Architectural Decisions
-- Single binary, zero external dependencies
+- Single binary with minimal external dependencies (Cobra CLI framework)
+- Cobra-based CLI for flexible command structure
+- HTTP handlers in dedicated server package
 - Stateless design for horizontal scaling
 - Configuration-driven model mapping
 - Strict API compatibility

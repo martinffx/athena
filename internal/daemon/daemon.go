@@ -3,6 +3,7 @@
 package daemon
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -84,6 +85,11 @@ func StartDaemon(cfg *config.Config) error {
 	if cfg.HaikuModel != "" {
 		args = append(args, "--model-haiku", cfg.HaikuModel)
 	}
+	if cfg.LogFormat != "" {
+		args = append(args, "--log-format", cfg.LogFormat)
+	}
+	// Always set log file for daemon (writes to ~/.athena/athena.log)
+	args = append(args, "--log-file", logPath)
 
 	// Create command
 	cmd := exec.Command(execPath, args...)
@@ -192,4 +198,105 @@ func IsRunning() bool {
 		return false
 	}
 	return IsProcessRunning(state.PID)
+}
+
+// StartWithConfig starts the daemon and returns its status
+func StartWithConfig(cfg *config.Config) (*Status, error) {
+	if err := StartDaemon(cfg); err != nil {
+		return nil, err
+	}
+
+	status, err := GetStatus()
+	if err != nil {
+		return nil, fmt.Errorf("daemon started but failed to get status: %w", err)
+	}
+
+	return status, nil
+}
+
+// LaunchWithClaude starts the daemon (if not running) and launches Claude Code
+func LaunchWithClaude(cfg *config.Config, args []string) error {
+	// Check if daemon is already running
+	if !IsRunning() {
+		fmt.Println("Starting Athena daemon...")
+
+		if err := StartDaemon(cfg); err != nil {
+			return fmt.Errorf("failed to start daemon: %w", err)
+		}
+
+		fmt.Println("✓ Daemon started")
+	}
+
+	// Get daemon status to determine port
+	status, err := GetStatus()
+	if err != nil {
+		return fmt.Errorf("failed to get daemon status: %w", err)
+	}
+
+	// Set environment variables for Claude Code
+	baseURL := fmt.Sprintf("http://localhost:%d/v1", status.Port)
+	os.Setenv("ANTHROPIC_BASE_URL", baseURL)
+
+	fmt.Printf("✓ Environment configured:\n")
+	fmt.Printf("  ANTHROPIC_BASE_URL=%s\n", baseURL)
+	fmt.Println()
+
+	// Find claude executable
+	claudePath, err := exec.LookPath("claude")
+	if err != nil {
+		return fmt.Errorf("claude command not found in PATH. Please install Claude Code: https://claude.ai/download")
+	}
+
+	// Launch Claude Code
+	fmt.Println("Launching Claude Code...")
+	cmd := exec.Command(claudePath, args...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Env = os.Environ() // Pass through all environment variables
+
+	// Run claude and handle exit codes properly
+	err = cmd.Run()
+	if err != nil {
+		// Check if it's an exit error (claude exited with non-zero status)
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			// Exit with the same code as claude
+			os.Exit(exitErr.ExitCode())
+		}
+		// This was an actual execution error (not just non-zero exit)
+		return fmt.Errorf("failed to run claude: %w", err)
+	}
+
+	// Claude exited successfully (exit code 0)
+	return nil
+}
+
+// DisplayStatus outputs daemon status in human-readable or JSON format
+func DisplayStatus(status *Status, asJSON bool) error {
+	if asJSON {
+		// Output as JSON
+		encoder := json.NewEncoder(os.Stdout)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(status)
+	}
+
+	// Human-readable output
+	if !status.Running {
+		fmt.Println("Daemon: Not running")
+		return nil
+	}
+
+	fmt.Println("Athena Daemon Status")
+	fmt.Println("====================")
+	fmt.Printf("Status:  Running\n")
+	fmt.Printf("PID:     %d\n", status.PID)
+	fmt.Printf("Port:    %d\n", status.Port)
+	fmt.Printf("Uptime:  %v\n", status.Uptime.Round(time.Second))
+	fmt.Printf("Started: %s\n", status.StartTime.Format("2006-01-02 15:04:05"))
+	if status.ConfigPath != "" {
+		fmt.Printf("Config:  %s\n", status.ConfigPath)
+	}
+	fmt.Printf("Logs:    ~/.athena/athena.log\n")
+
+	return nil
 }

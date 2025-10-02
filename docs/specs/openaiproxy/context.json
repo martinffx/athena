@@ -1,6 +1,6 @@
 {
   "product_vision": {
-    "purpose": "Zero-dependency Go proxy for translating Anthropic API requests to OpenRouter format",
+    "purpose": "Lightweight Go proxy for translating Anthropic API requests to OpenRouter format",
     "target_users": [
       "Claude Code developers needing diverse AI models",
       "Cost-conscious developers",
@@ -20,16 +20,17 @@
     "Multi-modal content support (text + images)"
   ],
   "architecture": {
-    "tech_stack": "Go standard library only (no external dependencies)",
-    "project_structure": "cmd/ and internal/ package layout",
+    "tech_stack": "Go with minimal external dependencies (Cobra CLI framework)",
+    "project_structure": "cmd/ and internal/ package layout with Cobra CLI",
     "key_components": {
+      "cli": "cmd/athena/main.go & internal/cli/root.go - Cobra CLI setup",
+      "server": "internal/server/server.go - HTTP server and request handlers",
       "transform": "internal/transform/transform.go - Core transformation logic",
-      "config": "internal/config/config.go - Configuration management",
-      "server": "HTTP server handling (to be implemented/enhanced)"
+      "config": "internal/config/config.go - Configuration management"
     },
     "design_principles": [
-      "Single-file component organization where practical",
-      "Standard library only",
+      "Minimal external dependencies (Cobra CLI)",
+      "Clean package separation",
       "Configuration-driven behavior",
       "Strict API compatibility",
       "Comprehensive error handling"

@@ -15,7 +15,8 @@
     "data_persistence": "None - Stateless proxy with no data persistence. All state is ephemeral and exists only during request/response processing. Configuration is loaded from files/env vars at startup.",
     "api_needed": "POST /v1/messages (Anthropic-compatible messages endpoint supporting both streaming and non-streaming), GET /health (health check endpoint)",
     "components": [
-      "HTTP Server - Request handling, routing, streaming",
+      "CLI Layer - cmd/athena/main.go & internal/cli/root.go (Cobra CLI setup)",
+      "HTTP Server - internal/server/server.go (Request handling, routing, streaming)",
       "Request Transformer - AnthropicToOpenAI conversion",
       "Response Transformer - OpenAIToAnthropic conversion",
       "Streaming Handler - SSE event processing and state management",
@@ -134,7 +135,8 @@
         "internal/config - Configuration management"
       ],
       "external": [
-        "Go standard library only (net/http, encoding/json, bufio)",
+        "Cobra CLI framework (github.com/spf13/cobra v1.10.1)",
+        "Go standard library (net/http, encoding/json, bufio)",
         "OpenRouter API (runtime dependency)",
         "Anthropic API specification (design dependency)",
         "OpenAI API specification (design dependency)"
@@ -143,8 +145,8 @@
   },
   "design": {
     "architecture_pattern": "Stateless HTTP Proxy with Transformation Layer",
-    "request_flow": "Claude Code → HTTP Server → Request Transformer → OpenRouter Client → Response Transformer → Claude Code",
-    "component_structure": "HTTP Handler → Transformation Service → Upstream Client",
+    "request_flow": "Claude Code → Cobra CLI → HTTP Server (internal/server) → Request Transformer → OpenRouter Client → Response Transformer → Claude Code",
+    "component_structure": "CLI Entry → Server Package → HTTP Handlers → Transformation Service → Upstream Client",
     "domain_model": {
       "entities": {
         "AnthropicRequest": {
@@ -322,7 +324,9 @@
   },
   "implementation_notes": {
     "architectural_decisions": [
-      "Single binary with zero external dependencies for maximum portability",
+      "Single binary with minimal external dependencies (Cobra CLI framework) for portability",
+      "Cobra-based CLI for flexible command structure and configuration",
+      "HTTP handlers in dedicated server package (internal/server/server.go)",
       "Stateless design enables horizontal scaling",
       "Configuration-driven model mapping supports diverse deployment scenarios",
       "Strict API compatibility prevents subtle behavior differences",

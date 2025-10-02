@@ -47,16 +47,18 @@
   },
   "aligns_with": "This specification documents Athena's core proxy functionality, which directly fulfills the product vision of enabling Claude Code to work with OpenRouter's diverse model selection. By maintaining strict API compatibility through bidirectional format translation, the proxy allows Claude Code developers to access multiple AI model providers while preserving their native API calling patterns. This aligns with the value proposition of zero-configuration model flexibility with cost optimization.",
   "dependencies": [
-    "Go standard library (no external dependencies)",
+    "Go standard library with minimal external dependencies (Cobra CLI framework)",
     "OpenRouter API availability",
     "Anthropic API specification for request/response formats",
     "OpenAI API specification for request/response formats"
   ],
   "technical_details": {
     "key_components": [
+      "cmd/athena/main.go - Application entry point",
+      "internal/cli/root.go - Cobra CLI command setup",
+      "internal/server/server.go - HTTP server with request handlers",
       "internal/transform/transform.go - Core bidirectional transformation logic",
       "internal/config/config.go - Multi-source configuration management",
-      "HTTP server - Request handling, streaming, error responses",
       "Model mapping - Configurable model name translation"
     ],
     "data_models": [
@@ -92,5 +94,5 @@
     }
   },
   "implementation_status": "Production-ready - All core features are implemented, tested, and deployed. This specification documents existing functionality rather than defining new features.",
-  "notes": "This specification describes the EXISTING implementation of Athena's proxy functionality. The codebase already implements all specified features with comprehensive test coverage. The purpose of this spec is to provide a complete, structured reference for the current implementation rather than to guide new development. Key architectural decisions include: (1) zero external dependencies for maximum portability, (2) single-file component organization within standard cmd/internal structure, (3) strict API compatibility enforcement to prevent subtle behavior differences, and (4) configuration-driven model mapping to support diverse deployment scenarios from local Ollama to production OpenRouter."
+  "notes": "This specification describes the EXISTING implementation of Athena's proxy functionality. The codebase already implements all specified features with comprehensive test coverage. The purpose of this spec is to provide a complete, structured reference for the current implementation rather than to guide new development. Key architectural decisions include: (1) minimal external dependencies (Cobra CLI framework) for maximum portability, (2) Cobra-based CLI with clean package separation, (3) strict API compatibility enforcement to prevent subtle behavior differences, and (4) configuration-driven model mapping to support diverse deployment scenarios from local Ollama to production OpenRouter."
 }

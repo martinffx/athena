@@ -89,254 +89,6 @@ jobs:
           go build -ldflags="-s -w" -o dist/athena-${{ matrix.platform }} ./cmd/athena
         fi
 
-    - name: Create wrapper script (Unix)
-      if: matrix.goos != 'windows'
-      run: |
-        cat > dist/athena-wrapper-${{ matrix.platform }} << 'EOF'
-        #!/bin/bash
-
-        # Athena Proxy + Claude Code TUI Launcher
-        # This script starts the proxy server and launches Claude Code with the proxy configuration
-
-        set -e
-
-        SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-        BINARY="$SCRIPT_DIR/athena-${{ matrix.platform }}"
-        PROXY_PORT="${PROXY_PORT:-11434}"
-        PROXY_URL="http://localhost:$PROXY_PORT"
-        
-        # Colors for output
-        RED='\033[0;31m'
-        GREEN='\033[0;32m'
-        YELLOW='\033[1;33m'
-        BLUE='\033[0;34m'
-        NC='\033[0m' # No Color
-        
-        log() {
-            echo -e "${BLUE}[athena]${NC} $1"
-        }
-
-        warn() {
-            echo -e "${YELLOW}[athena]${NC} $1"
-        }
-
-        error() {
-            echo -e "${RED}[athena]${NC} $1"
-        }
-
-        success() {
-            echo -e "${GREEN}[athena]${NC} $1"
-        }
-        
-        # Check if binary exists
-        if [[ ! -f "$BINARY" ]]; then
-            error "Binary not found: $BINARY"
-            exit 1
-        fi
-        
-        # Check if claude command exists
-        if ! command -v claude >/dev/null 2>&1; then
-            error "Claude Code CLI not found. Please install Claude Code first."
-            echo "Visit: https://claude.ai/code"
-            exit 1
-        fi
-        
-        # Function to check if port is available
-        check_port() {
-            if command -v lsof >/dev/null 2>&1; then
-                if lsof -Pi :$1 -sTCP:LISTEN -t >/dev/null 2>&1; then
-                    return 1
-                else
-                    return 0
-                fi
-            else
-                # Fallback for systems without lsof
-                if nc -z localhost $1 2>/dev/null; then
-                    return 1
-                else
-                    return 0
-                fi
-            fi
-        }
-        
-        # Function to wait for server to start
-        wait_for_server() {
-            local max_attempts=30
-            local attempt=0
-            
-            log "Waiting for proxy server to start on port $PROXY_PORT..."
-            
-            while [[ $attempt -lt $max_attempts ]]; do
-                if command -v curl >/dev/null 2>&1; then
-                    if curl -s "$PROXY_URL/health" >/dev/null 2>&1; then
-                        success "Proxy server is ready!"
-                        return 0
-                    fi
-                elif command -v wget >/dev/null 2>&1; then
-                    if wget -q -O - "$PROXY_URL/health" >/dev/null 2>&1; then
-                        success "Proxy server is ready!"
-                        return 0
-                    fi
-                else
-                    log "curl or wget not found, assuming server is ready"
-                    sleep 3
-                    return 0
-                fi
-                
-                sleep 1
-                ((attempt++))
-                
-                if [[ $((attempt % 5)) -eq 0 ]]; then
-                    log "Still waiting... (attempt $attempt/$max_attempts)"
-                fi
-            done
-            
-            error "Proxy server failed to start within 30 seconds"
-            return 1
-        }
-        
-        # Function to cleanup background processes
-        cleanup() {
-            if [[ -n $PROXY_PID ]]; then
-                log "Stopping proxy server (PID: $PROXY_PID)..."
-                kill $PROXY_PID 2>/dev/null || true
-                wait $PROXY_PID 2>/dev/null || true
-            fi
-        }
-        
-        # Set up signal handlers
-        trap cleanup EXIT INT TERM
-        
-        # Check if proxy port is available
-        if ! check_port $PROXY_PORT; then
-            warn "Port $PROXY_PORT is already in use. Trying to use existing proxy..."
-            if command -v curl >/dev/null 2>&1; then
-                if curl -s "$PROXY_URL/health" >/dev/null 2>&1; then
-                    success "Found existing proxy server on port $PROXY_PORT"
-                else
-                    error "Port $PROXY_PORT is occupied by another service"
-                    exit 1
-                fi
-            else
-                warn "Cannot check if existing proxy is running (curl not found)"
-            fi
-        else
-            # Start the proxy server in background
-            log "Starting athena proxy server on port $PROXY_PORT..."
-            "$BINARY" -port "$PROXY_PORT" "$@" &
-            PROXY_PID=$!
-            
-            # Wait for server to be ready
-            if ! wait_for_server; then
-                exit 1
-            fi
-        fi
-        
-        # Export environment variables for Claude Code
-        export ANTHROPIC_BASE_URL="$PROXY_URL"
-        
-        # Get API key from proxy config or environment
-        if [[ -z "$ANTHROPIC_API_KEY" ]]; then
-            # Try to get from .env file
-            if [[ -f "$SCRIPT_DIR/.env" ]]; then
-                eval "$(grep -E '^OPENROUTER_API_KEY=' "$SCRIPT_DIR/.env" | head -1)"
-                export ANTHROPIC_API_KEY="$OPENROUTER_API_KEY"
-            fi
-            
-            # Try to get from config files
-            if [[ -z "$ANTHROPIC_API_KEY" ]]; then
-                for config in "$HOME/.config/athena/athena.yml" "$HOME/.config/athena/athena.json" "$SCRIPT_DIR/athena.yml" "$SCRIPT_DIR/athena.json"; do
-                    if [[ -f "$config" ]]; then
-                        if [[ "$config" == *.yml ]]; then
-                            API_KEY=$(grep -E '^api_key:' "$config" | sed 's/^api_key:[[:space:]]*["\'"'"']?\([^"'"'"']*\)["\'"'"']?[[:space:]]*$/\1/')
-                        else
-                            API_KEY=$(grep -o '"api_key"[[:space:]]*:[[:space:]]*"[^"]*"' "$config" | sed 's/.*"api_key"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')
-                        fi
-                        if [[ -n "$API_KEY" ]]; then
-                            export ANTHROPIC_API_KEY="$API_KEY"
-                            break
-                        fi
-                    fi
-                done
-            fi
-        fi
-        
-        if [[ -z "$ANTHROPIC_API_KEY" ]]; then
-            warn "No API key found. Claude Code will prompt for authentication."
-            warn "Set OPENROUTER_API_KEY in your .env file or config for automatic authentication."
-        fi
-        
-        log "Launching Claude Code TUI..."
-        log "Proxy URL: $PROXY_URL"
-        log "API Key: ${ANTHROPIC_API_KEY:+***configured***}"
-        
-        # Launch Claude Code
-        claude
-        
-        # Cleanup happens automatically via trap
-        EOF
-        chmod +x dist/athena-wrapper-${{ matrix.platform }}
-
-    - name: Create wrapper script (Windows)
-      if: matrix.goos == 'windows'
-      run: |
-        cat > dist/athena-wrapper-${{ matrix.platform }}.bat << 'EOF'
-        @echo off
-        setlocal
-
-        set "SCRIPT_DIR=%~dp0"
-        set "BINARY=%SCRIPT_DIR%athena-${{ matrix.platform }}.exe"
-        if "%PROXY_PORT%"=="" set "PROXY_PORT=11434"
-        set "PROXY_URL=http://localhost:%PROXY_PORT%"
-        
-        echo [athena] Starting Athena Proxy + Claude Code TUI...
-
-        rem Check if binary exists
-        if not exist "%BINARY%" (
-            echo [athena] Error: Binary not found: %BINARY%
-            exit /b 1
-        )
-
-        rem Check if claude command exists
-        claude --version >nul 2>&1
-        if errorlevel 1 (
-            echo [athena] Error: Claude Code CLI not found. Please install Claude Code first.
-            echo Visit: https://claude.ai/code
-            exit /b 1
-        )
-
-        rem Start the proxy server in background
-        echo [athena] Starting proxy server on port %PROXY_PORT%...
-        start /b "" "%BINARY%" -port %PROXY_PORT% %*
-        
-        rem Wait a bit for server to start
-        timeout /t 3 /nobreak >nul
-        
-        rem Export environment variables for Claude Code
-        set "ANTHROPIC_BASE_URL=%PROXY_URL%"
-        
-        rem Get API key from environment or config
-        if "%ANTHROPIC_API_KEY%"=="" (
-            if exist "%SCRIPT_DIR%.env" (
-                for /f "tokens=2 delims==" %%a in ('findstr "OPENROUTER_API_KEY" "%SCRIPT_DIR%.env"') do set "ANTHROPIC_API_KEY=%%a"
-            )
-        )
-        
-        if "%ANTHROPIC_API_KEY%"=="" (
-            echo [athena] Warning: No API key found. Claude Code will prompt for authentication.
-            echo [athena] Warning: Set OPENROUTER_API_KEY in your .env file for automatic authentication.
-        )
-
-        echo [athena] Launching Claude Code TUI...
-        echo [athena] Proxy URL: %PROXY_URL%
-
-        rem Launch Claude Code
-        claude
-
-        rem Kill background processes (best effort)
-        taskkill /f /im athena-${{ matrix.platform }}.exe >nul 2>&1
-        EOF
-
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
@@ -360,11 +112,9 @@ jobs:
       run: |
         mkdir -p release
         find artifacts -name "athena-*" -type f -exec cp {} release/ \;
-        find artifacts -name "athena-wrapper-*" -type f -exec cp {} release/ \;
-        
+
         # Copy example configs to release
         cp athena.example.yml release/ || cp openrouter.example.yml release/athena.example.yml 2>/dev/null || true
-        cp athena.example.json release/ || cp openrouter.example.json release/athena.example.json 2>/dev/null || true
         cp .env.example release/
 
         # Create README for release
@@ -376,36 +126,43 @@ jobs:
         ## Quick Start
 
         1. Download the appropriate binary for your platform
-        2. Copy the example config: `cp athena.example.yml athena.yml`
-        3. Edit the config with your OpenRouter API key
-        4. Run: `./athena-wrapper-<platform>` (Unix) or `athena-wrapper-<platform>.bat` (Windows)
+        2. Make it executable: `chmod +x athena-<platform>`
+        3. Copy example config: `cp athena.example.yml ~/.config/athena/athena.yml`
+        4. Edit config with your OpenRouter API key
+        5. Run: `./athena-<platform> code` (launches daemon + Claude Code)
 
         ## Files
 
-        - `athena-<platform>`: The proxy server binary
-        - `athena-wrapper-<platform>`: Wrapper script that starts proxy + Claude Code
+        - `athena-<platform>`: The proxy server binary (includes daemon management + CLI)
         - `athena.example.yml`: Example YAML configuration
-        - `athena.example.json`: Example JSON configuration
         - `.env.example`: Example environment variables file
 
         ## Configuration
 
         The proxy looks for configuration in this order:
         1. Command line flags
-        2. Config files: `~/.config/athena/athena.{yml,json}` or `./athena.{yml,json}`
+        2. Config files: `~/.config/athena/athena.yml` or `./athena.yml`
         3. Environment variables (including `.env` file)
         4. Built-in defaults
 
         ## Usage
 
-        ### Just the proxy server:
+        ### Launch daemon + Claude Code:
         ```bash
-        ./athena-<platform> -api-key YOUR_KEY
+        ./athena-<platform> code
         ```
 
-        ### Proxy + Claude Code TUI:
+        ### Daemon management:
         ```bash
-        ./athena-wrapper-<platform>
+        ./athena-<platform> start   # Start daemon in background
+        ./athena-<platform> stop    # Stop daemon
+        ./athena-<platform> status  # Check daemon status
+        ./athena-<platform> logs    # View daemon logs
+        ```
+
+        ### Run server directly (foreground):
+        ```bash
+        ./athena-<platform> --api-key YOUR_KEY
         ```
 
         The proxy runs on port 11434 by default and provides an Anthropic-compatible API that forwards to OpenRouter.
@@ -418,7 +175,7 @@ jobs:
         body: |
           ## Athena Release
 
-          Anthropic to OpenRouter proxy server with Claude Code integration.
+          Anthropic to OpenRouter proxy server with Claude Code integration and daemon management.
 
           ### Features
           - Maps Anthropic API calls to OpenRouter format
@@ -426,17 +183,28 @@ jobs:
           - Tool/function calling support
           - Configurable model mappings (Opus, Sonnet, Haiku)
           - Multiple configuration methods (CLI, config files, env vars)
-          - Integrated Claude Code TUI launcher
+          - Built-in daemon management (start, stop, status, logs)
+          - Integrated Claude Code launcher (`athena code`)
+          - Structured logging with rotation
+
+          ### Quick Start
+          ```bash
+          # Download binary for your platform
+          chmod +x athena-<platform>
+
+          # Launch daemon + Claude Code
+          ./athena-<platform> code
+          ```
 
           ### Downloads
-          - **Linux AMD64**: `athena-linux-amd64` + `athena-wrapper-linux-amd64`
-          - **Linux ARM64**: `athena-linux-arm64` + `athena-wrapper-linux-arm64`
-          - **macOS Intel**: `athena-darwin-amd64` + `athena-wrapper-darwin-amd64`
-          - **macOS Apple Silicon**: `athena-darwin-arm64` + `athena-wrapper-darwin-arm64`
-          - **Windows AMD64**: `athena-windows-amd64.exe` + `athena-wrapper-windows-amd64.bat`
-          - **Windows ARM64**: `athena-windows-arm64.exe` + `athena-wrapper-windows-arm64.bat`
+          - **Linux AMD64**: `athena-linux-amd64`
+          - **Linux ARM64**: `athena-linux-arm64`
+          - **macOS Intel**: `athena-darwin-amd64`
+          - **macOS Apple Silicon**: `athena-darwin-arm64`
+          - **Windows AMD64**: `athena-windows-amd64.exe`
+          - **Windows ARM64**: `athena-windows-arm64.exe`
 
-          See the included `README.md` for setup instructions.
+          See the included `README.md` for complete setup instructions.
         draft: false
         prerelease: false
       env:
