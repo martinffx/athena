@@ -993,7 +993,9 @@ func TestAnthropicToOpenAI_ProviderRouting(t *testing.T) {
 
 func TestGetProviderForModel(t *testing.T) {
 	cfg := &config.Config{
-		Model: "moonshotai/kimi-k2-0905",
+		Model:       "moonshotai/kimi-k2-0905",
+		OpusModel:   "anthropic/claude-3-opus",     // Must be set for opus provider to be used
+		SonnetModel: "anthropic/claude-3.5-sonnet", // Must be set for sonnet provider to be used
 		DefaultProvider: &config.ProviderConfig{
 			Order:          []string{"Groq"},
 			AllowFallbacks: false,
@@ -1027,9 +1029,10 @@ func TestGetProviderForModel(t *testing.T) {
 			expectedOrder:  []string{"Anthropic", "OpenAI"},
 		},
 		{
-			name:           "haiku model with no config",
+			name:           "haiku model with no config uses default",
 			model:          "claude-3-haiku",
-			expectProvider: false,
+			expectProvider: true,
+			expectedOrder:  []string{"Groq"}, // Falls back to default provider
 		},
 		{
 			name:           "direct model ID uses default",

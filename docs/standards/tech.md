@@ -3,10 +3,10 @@
 ## Architecture Overview
 
 ### Core Design Principles
-- **Simplicity**: Single binary with zero runtime dependencies
+- **Simplicity**: Single binary with minimal external dependencies (Cobra CLI, YAML parser, log rotation)
 - **Reliability**: Robust error handling and graceful degradation
 - **Performance**: Efficient request/response transformation and streaming
-- **Maintainability**: Clear separation of concerns despite monolithic structure
+- **Maintainability**: Clear separation of concerns with modular package structure
 - **Compatibility**: Full API compatibility with Anthropic Messages API
 
 ### System Architecture
@@ -20,7 +20,11 @@ Anthropic API   Translation Layer    OpenAI Format      Various Models
 
 ### Language & Runtime
 - **Language**: Go 1.21+
-- **Dependencies**: Standard library only (net/http, encoding/json, etc.)
+- **Dependencies**:
+  - Cobra CLI framework (`github.com/spf13/cobra`) - command-line interface
+  - YAML parser (`github.com/goccy/go-yaml`) - configuration files
+  - Lumberjack (`gopkg.in/natefinch/lumberjack.v2`) - log rotation
+  - Go standard library (net/http, encoding/json, log/slog, etc.)
 - **Build**: Single static binary compilation
 - **Platforms**: Linux, macOS, Windows (AMD64 + ARM64)
 
@@ -31,7 +35,7 @@ Anthropic API   Translation Layer    OpenAI Format      Various Models
 - **Content Types**: application/json, text/event-stream
 
 ### Configuration Standards
-- **Formats**: YAML (primary), JSON (secondary), Environment Variables
+- **Formats**: YAML, Environment Variables
 - **Precedence**: CLI flags → config files → env vars → defaults
 - **Locations**: `~/.config/openrouter-cc/`, `./`, environment
 

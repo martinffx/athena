@@ -117,10 +117,8 @@ main() {
     # Determine filenames
     if [[ "$PLATFORM" == *"windows"* ]]; then
         BINARY_NAME="athena-${PLATFORM}.exe"
-        WRAPPER_NAME="athena-wrapper-${PLATFORM}.bat"
     else
         BINARY_NAME="athena-${PLATFORM}"
-        WRAPPER_NAME="athena-wrapper-${PLATFORM}"
     fi
     
     # Create install directory
@@ -141,12 +139,11 @@ main() {
     
     # Get download URLs
     BINARY_URL=$(get_download_url "$RELEASE_JSON" "$BINARY_NAME")
-    WRAPPER_URL=$(get_download_url "$RELEASE_JSON" "$WRAPPER_NAME")
-    
+
     if [[ -z "$BINARY_URL" ]]; then
         error "Could not find binary download URL for platform: $PLATFORM"
         error "Available files:"
-        echo "$RELEASE_JSON" | grep -o '"name": *"[^"]*"' | cut -d'"' -f4 | grep -E "(athena-|athena-wrapper-)" | sort
+        echo "$RELEASE_JSON" | grep -o '"name": *"[^"]*"' | cut -d'"' -f4 | grep "athena-" | sort
         exit 1
     fi
 
@@ -155,24 +152,11 @@ main() {
     download_file "$BINARY_URL" "$BINARY_PATH"
     chmod +x "$BINARY_PATH"
 
-    # Download wrapper script if available
-    if [[ -n "$WRAPPER_URL" ]]; then
-        if [[ "$PLATFORM" == *"windows"* ]]; then
-            WRAPPER_PATH="$INSTALL_DIR/athena-wrapper.bat"
-        else
-            WRAPPER_PATH="$INSTALL_DIR/athena-wrapper"
-        fi
-        download_file "$WRAPPER_URL" "$WRAPPER_PATH"
-        chmod +x "$WRAPPER_PATH" 2>/dev/null || true
-        success "Installed wrapper script: $WRAPPER_PATH"
-    fi
-    
     success "Installed binary: $BINARY_PATH"
     
     # Download example configs
     CONFIG_URLS=(
         "$(get_download_url "$RELEASE_JSON" "athena.example.yml")"
-        "$(get_download_url "$RELEASE_JSON" "athena.example.json")"
         "$(get_download_url "$RELEASE_JSON" ".env.example")"
     )
 
@@ -200,7 +184,8 @@ main() {
     log "Next steps:"
     echo "1. Copy example config: cp $CONFIG_DIR/athena.example.yml $CONFIG_DIR/athena.yml"
     echo "2. Edit config with your OpenRouter API key"
-    echo "3. Run: athena (server only) or athena-wrapper (server + Claude Code)"
+    echo "3. Run: athena code (launches daemon + Claude Code)"
+    echo "   Or: athena start (daemon only)"
     echo
     log "For more information, see: https://github.com/$REPO"
 }

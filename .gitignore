@@ -25,8 +25,9 @@ build/
 
 # Configuration files with secrets
 .env
-openrouter.yml
-openrouter.json
+athena.yml
+athena.yaml
+athena.json
 
 # IDE and editor files
 .vscode/

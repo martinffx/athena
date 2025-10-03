@@ -17,7 +17,7 @@ A proxy server that maps Anthropic's API format to OpenAI API format, allowing y
 - 🔀 **Provider Routing**: Automatic Groq provider routing for Kimi K2 models
 - ⚙️ **Flexible Configuration**: CLI flags, config files, environment variables, and .env files
 - 🖥️ **Claude Code Integration**: Built-in launcher for seamless Claude Code TUI experience
-- 🚀 **Zero Dependencies**: Uses only Go standard library
+- 🚀 **Minimal Dependencies**: Lightweight with only essential external packages (Cobra CLI, YAML, log rotation)
 
 ## Quick Start
 
@@ -53,28 +53,26 @@ haiku_model: "anthropic/claude-3.5-haiku"
 
 **Note:** The default model `moonshotai/kimi-k2-0905` automatically uses Groq provider routing for optimal performance.
 
-### Advanced: Provider Routing (JSON Config)
+### Advanced: Provider Routing
 
-For fine-grained control over provider routing, use JSON format:
+For fine-grained control over provider routing, add provider configurations to your YAML config:
 
-```json
-{
-  "port": "11434",
-  "api_key": "your-openrouter-api-key-here",
-  "base_url": "https://openrouter.ai/api",
-  "model": "moonshotai/kimi-k2-0905",
-  "default_provider": {
-    "order": ["Groq"],
-    "allow_fallbacks": false
-  },
-  "opus_model": "anthropic/claude-3-opus",
-  "opus_provider": {
-    "order": ["Anthropic"],
-    "allow_fallbacks": true
-  },
-  "sonnet_model": "anthropic/claude-3.5-sonnet",
-  "haiku_model": "anthropic/claude-3.5-haiku"
-}
+```yaml
+port: "11434"
+api_key: "your-openrouter-api-key-here"
+base_url: "https://openrouter.ai/api"
+model: "moonshotai/kimi-k2-0905"
+default_provider:
+  order:
+    - Groq
+  allow_fallbacks: false
+opus_model: "anthropic/claude-3-opus"
+opus_provider:
+  order:
+    - Anthropic
+  allow_fallbacks: true
+sonnet_model: "anthropic/claude-3.5-sonnet"
+haiku_model: "anthropic/claude-3.5-haiku"
 ```
 
 Provider routing allows you to:

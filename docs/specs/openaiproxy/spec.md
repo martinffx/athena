@@ -75,9 +75,11 @@ As a Claude Code user, I want to use the proxy to connect to OpenRouter with dif
 ## Technical Details
 
 ### Key Components
+- `cmd/athena/main.go`: Application entry point
+- `internal/cli/root.go`: Cobra CLI command setup
+- `internal/server/server.go`: HTTP server with request handlers
 - `internal/transform/transform.go`: Core transformation logic
 - `internal/config/config.go`: Configuration management
-- HTTP server: Request handling and streaming
 - Model mapping system
 
 ### Data Models
@@ -108,6 +110,7 @@ As a Claude Code user, I want to use the proxy to connect to OpenRouter with dif
 
 ## Dependencies
 - Go standard library
+- Cobra CLI framework (github.com/spf13/cobra v1.10.1)
 - OpenRouter API
 - Anthropic API specification
 - OpenAI API specification
@@ -117,7 +120,8 @@ As a Claude Code user, I want to use the proxy to connect to OpenRouter with dif
 
 ## Notes
 This specification documents the existing implementation of Athena's proxy functionality. Key architectural decisions include:
-- Zero external dependencies
-- Single-file component organization
+- Minimal external dependencies (Cobra CLI framework)
+- Cobra-based CLI with clean package separation
+- HTTP handlers in dedicated server package
 - Strict API compatibility enforcement
 - Configuration-driven model mapping

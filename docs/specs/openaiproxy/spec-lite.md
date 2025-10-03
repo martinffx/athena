@@ -1,7 +1,7 @@
 # OpenAI Proxy: Feature Overview
 
 ## Feature Description
-Athena provides a lightweight, zero-dependency proxy that enables seamless API translation between Anthropic and OpenRouter/OpenAI formats, allowing Claude Code to access diverse AI models with native API compatibility.
+Athena provides a lightweight proxy that enables seamless API translation between Anthropic and OpenRouter/OpenAI formats, allowing Claude Code to access diverse AI models with native API compatibility.
 
 ## Key Acceptance Criteria
 
@@ -33,10 +33,12 @@ Athena provides a lightweight, zero-dependency proxy that enables seamless API t
 ## Technical Essentials
 
 ### Transformation Components
-- Core logic in `internal/transform/transform.go`
+- Cobra CLI framework for command-line interface
+- HTTP server in `internal/server/server.go`
+- Core transformation logic in `internal/transform/transform.go`
 - Supports complex content types (text, multi-modal)
 - Handles tool/function translations
-- Zero external dependencies
+- Minimal external dependencies (Cobra CLI framework)
 
 ### Performance Profile
 - Latency: <1ms per transformation

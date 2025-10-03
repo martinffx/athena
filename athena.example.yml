@@ -7,12 +7,17 @@ opus_model: "anthropic/claude-3-opus"
 sonnet_model: "anthropic/claude-3.5-sonnet"
 haiku_model: "anthropic/claude-3.5-haiku"
 
+# Logging configuration
+log_format: "text"        # "text" or "json"
+# log_file: "/path/to/athena.log"  # Optional: log file path (default: stdout, daemon uses ~/.athena/athena.log)
+
 # Provider routing is configured automatically for kimi-k2 models via Groq
-# To customize provider routing, use JSON format:
-# {
-#   "model": "moonshotai/kimi-k2-0905",
-#   "default_provider": {
-#     "order": ["Groq"],
-#     "allow_fallbacks": false
-#   }
-# }
+# To customize provider routing, add provider configurations:
+# default_provider:
+#   order:
+#     - Groq
+#   allow_fallbacks: false
+# opus_provider:
+#   order:
+#     - Anthropic
+#   allow_fallbacks: true

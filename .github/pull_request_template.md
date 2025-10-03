@@ -29,7 +29,7 @@ Brief description of the changes in this PR.
 
 If this PR changes configuration options:
 
-- [ ] I have updated example config files (`openrouter.example.yml`, `openrouter.example.json`, `.env.example`)
+- [ ] I have updated example config files (`openrouter.example.yml`, `.env.example`)
 - [ ] I have updated the README.md with new configuration options
 - [ ] I have updated CLAUDE.md if the changes affect development workflow
 
