@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Athena is a Go-based HTTP proxy server that translates Anthropic API requests to OpenRouter format, enabling Claude Code to work with OpenRouter's diverse model selection. The application uses minimal external dependencies (Cobra CLI framework, YAML parser, log rotation) and follows standard Go project layout with `cmd/` and `internal/` packages.
+Athena is a Go-based HTTP proxy server that translates Anthropic API requests to OpenRouter format, enabling Claude Code to work with OpenRouter's diverse model selection. The application uses minimal external dependencies (Cobra CLI framework, YAML parser) and follows standard Go project layout with `cmd/` and `internal/` packages.
 
 **Status**: Production-ready with all core features implemented and tested.
 
@@ -86,25 +86,79 @@ make build
 ./athena -port 9000 -api-key YOUR_KEY
 ```
 
+### CLI Commands
+
+Athena provides a simple 4-command interface:
+
+```bash
+# Run server in foreground (default)
+athena
+
+# Start server as background daemon
+athena start
+
+# Stop the daemon
+athena stop
+
+# Show daemon status
+athena status
+```
+
+Logs are written to `~/.athena/athena.log` in daemon mode. View with standard tools:
+```bash
+# Follow logs in real-time
+tail -f ~/.athena/athena.log
+
+# Search logs
+grep "error" ~/.athena/athena.log
+
+# View last 100 lines
+tail -n 100 ~/.athena/athena.log
+```
+
+**Log Levels:**
+- `info` (default): High-level request/response metadata without bodies
+- `debug`: Full request/response bodies logged (useful for troubleshooting)
+- `warn`: Warnings and errors only
+- `error`: Errors only
+
+```bash
+# Enable debug logging
+athena --log-level debug
+
+# Or via config file
+# athena.yml:
+log_level: "debug"
+
+# Or via environment variable
+export ATHENA_LOG_LEVEL=debug
+athena start
+```
+
 ### Testing the Proxy
 ```bash
 # Health check
-curl http://localhost:11434/health
+curl http://localhost:12377/health
 
 # Test message endpoint
-curl -X POST http://localhost:11434/v1/messages \
+curl -X POST http://localhost:12377/v1/messages \
   -H "Content-Type: application/json" \
   -H "X-Api-Key: your-openrouter-key" \
   -d '{"model":"claude-3-sonnet","messages":[{"role":"user","content":"Hello"}]}'
 ```
 
 ### Configuration Management
-The configuration system follows this priority: CLI flags > config files > env vars > defaults
+The configuration system follows this priority (highest to lowest):
+1. **CLI flags** (via --flag options)
+2. **Environment variables** (ATHENA_* prefixed)
+3. **Local config file** (./athena.yml in current directory)
+4. **Global config file** (~/.config/athena/athena.yml)
+5. **Defaults** (hardcoded in config.go)
 
-Config files searched in order:
-- `~/.config/athena/athena.{yml,json}`
-- `./athena.{yml,json}`
-- `./.env` (environment variables)
+Config file discovery:
+- If `--config` flag is provided, only that file is loaded
+- Otherwise, both global and local configs are discovered and merged (local overrides global)
+- Runtime state (PID file, logs) stored in `~/.athena/`
 
 ## Key Implementation Details
 
@@ -180,7 +234,7 @@ haiku_model: "google/gemini-pro"          # Fast/cheap
 
 ### Local development with Ollama
 ```yaml
-base_url: "http://localhost:11434/v1"
+base_url: "http://localhost:12377/v1"
 opus_model: "llama3:70b"
 sonnet_model: "llama3:8b"
 ```

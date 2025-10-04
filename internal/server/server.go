@@ -23,11 +23,25 @@ func New(cfg *config.Config) *Server {
 	return &Server{cfg: cfg}
 }
 
+// loggingMiddleware logs all incoming requests
+func loggingMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		slog.Info("incoming request",
+			"method", r.Method,
+			"path", r.URL.Path,
+			"remote_addr", r.RemoteAddr,
+			"user_agent", r.Header.Get("User-Agent"),
+		)
+		next(w, r)
+	}
+}
+
 // Start starts the HTTP server
 func (s *Server) Start() error {
 
-	http.HandleFunc("/v1/messages", s.handleMessages)
-	http.HandleFunc("/health", s.handleHealth)
+	http.HandleFunc("/v1/messages", loggingMiddleware(s.handleMessages))
+	http.HandleFunc("/health", loggingMiddleware(s.handleHealth))
+	http.HandleFunc("/", loggingMiddleware(s.handleCatchAll))
 
 	slog.Info("starting server", "port", s.cfg.Port)
 
@@ -50,6 +64,16 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	}
 }
 
+func (s *Server) handleCatchAll(w http.ResponseWriter, r *http.Request) {
+	slog.Warn("unhandled request",
+		"method", r.Method,
+		"path", r.URL.Path,
+		"remote_addr", r.RemoteAddr,
+		"user_agent", r.Header.Get("User-Agent"),
+	)
+	http.Error(w, "404 page not found", http.StatusNotFound)
+}
+
 func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	ctx := r.Context()
@@ -65,6 +89,8 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Failed to read request body", http.StatusBadRequest)
 		return
 	}
+
+	slog.Debug("request body", "body", string(body))
 
 	var req transform.AnthropicRequest
 	if unmarshalErr := json.Unmarshal(body, &req); unmarshalErr != nil {
@@ -100,6 +126,8 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	slog.Debug("transformed request", "body", string(openAIBody))
+
 	// Forward to OpenRouter
 	client := &http.Client{}
 	url := s.cfg.BaseURL + "/v1/chat/completions"
@@ -134,11 +162,33 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 		actualProvider = "unknown"
 	}
 
-	slog.Info("response received",
-		"status", resp.StatusCode,
-		"duration_ms", duration.Milliseconds(),
-		"actual_provider", actualProvider,
-	)
+	// Log high-level response info
+	if resp.StatusCode >= 400 {
+		// Read and log error responses with full body
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		slog.Error("error response from OpenRouter",
+			"status", resp.StatusCode,
+			"duration_ms", duration.Milliseconds(),
+			"actual_provider", actualProvider,
+			"body", string(bodyBytes),
+		)
+		// Recreate the body for downstream processing
+		resp.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+	} else {
+		// Log success at INFO level without body
+		slog.Info("response received",
+			"status", resp.StatusCode,
+			"duration_ms", duration.Milliseconds(),
+			"actual_provider", actualProvider,
+		)
+		// Only read and log body at DEBUG level
+		if slog.Default().Enabled(ctx, slog.LevelDebug) {
+			bodyBytes, _ := io.ReadAll(resp.Body)
+			slog.Debug("response body", "body", string(bodyBytes))
+			// Recreate the body for downstream processing
+			resp.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+		}
+	}
 
 	// Handle response based on streaming
 	if req.Stream {

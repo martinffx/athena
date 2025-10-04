@@ -182,10 +182,22 @@ main() {
     success "Installation complete!"
     echo
     log "Next steps:"
-    echo "1. Copy example config: cp $CONFIG_DIR/athena.example.yml $CONFIG_DIR/athena.yml"
-    echo "2. Edit config with your OpenRouter API key"
-    echo "3. Run: athena code (launches daemon + Claude Code)"
-    echo "   Or: athena start (daemon only)"
+    echo "1. Set up global config:"
+    echo "   cp $CONFIG_DIR/athena.example.yml $CONFIG_DIR/athena.yml"
+    echo "2. Edit with your OpenRouter API key:"
+    echo "   vim $CONFIG_DIR/athena.yml"
+    echo "3. (Optional) Create project-specific config in your project directory:"
+    echo "   cp $CONFIG_DIR/athena.example.yml ./athena.yml"
+    echo
+    echo "4. Run the server:"
+    echo "   athena          # Foreground mode"
+    echo "   athena start    # Daemon mode"
+    echo
+    echo "5. (Optional) Configure Claude Code to use the proxy:"
+    echo "   export ANTHROPIC_BASE_URL=http://localhost:12377"
+    echo "   claude"
+    echo
+    log "Config priority: CLI flags > env vars > ./athena.yml > ~/.config/athena/athena.yml > defaults"
     echo
     log "For more information, see: https://github.com/$REPO"
 }

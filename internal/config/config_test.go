@@ -359,3 +359,162 @@ func TestNew_LogFormat(t *testing.T) {
 		t.Errorf("LogFormat = %q, expected %q", cfg.LogFormat, "json")
 	}
 }
+
+func TestNew_ConfigDiscovery(t *testing.T) {
+	// Save original directory and restore at the end
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Failed to get working directory: %v", err)
+	}
+	defer func() {
+		if chdirErr := os.Chdir(origDir); chdirErr != nil {
+			t.Logf("Failed to restore directory: %v", chdirErr)
+		}
+	}()
+
+	// Create a temp directory and change to it
+	tmpDir := t.TempDir()
+	if chdirErr := os.Chdir(tmpDir); chdirErr != nil {
+		t.Fatalf("Failed to change to temp directory: %v", chdirErr)
+	}
+
+	// Create local config file
+	localContent := `port: "7777"
+api_key: "local-key"
+model: "local/model"
+`
+	if writeErr := os.WriteFile("athena.yml", []byte(localContent), 0644); writeErr != nil {
+		t.Fatalf("Failed to write local config: %v", writeErr)
+	}
+
+	// Clear env vars
+	os.Unsetenv("ATHENA_PORT")
+	os.Unsetenv("ATHENA_API_KEY")
+	os.Unsetenv("ATHENA_MODEL")
+
+	// Test that local config is discovered and loaded
+	cfg, err := New("")
+	if err != nil {
+		t.Fatalf("New() failed: %v", err)
+	}
+
+	if cfg.Port != "7777" {
+		t.Errorf("Port = %q, expected %q (from discovered local config)", cfg.Port, "7777")
+	}
+	if cfg.APIKey != "local-key" {
+		t.Errorf("APIKey = %q, expected %q (from discovered local config)", cfg.APIKey, "local-key")
+	}
+	if cfg.Model != "local/model" {
+		t.Errorf("Model = %q, expected %q (from discovered local config)", cfg.Model, "local/model")
+	}
+}
+
+func TestNew_PrecedenceLocalOverridesGlobal(t *testing.T) {
+	// This test verifies the precedence: env > local > global > defaults
+	// We'll simulate a global config by creating it in a temp location
+	// and a local config that overrides some values
+
+	// Save original directory
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Failed to get working directory: %v", err)
+	}
+	defer func() {
+		if chdirErr := os.Chdir(origDir); chdirErr != nil {
+			t.Logf("Failed to restore directory: %v", chdirErr)
+		}
+	}()
+
+	// Create temp directory for test
+	tmpDir := t.TempDir()
+	if chdirErr := os.Chdir(tmpDir); chdirErr != nil {
+		t.Fatalf("Failed to change to temp directory: %v", chdirErr)
+	}
+
+	// Create local config that overrides some values
+	localContent := `port: "8888"
+api_key: "local-key"
+`
+	if writeErr := os.WriteFile("athena.yml", []byte(localContent), 0644); writeErr != nil {
+		t.Fatalf("Failed to write local config: %v", writeErr)
+	}
+
+	// Clear env vars
+	os.Unsetenv("ATHENA_PORT")
+	os.Unsetenv("ATHENA_API_KEY")
+	os.Unsetenv("ATHENA_MODEL")
+
+	cfg, err := New("")
+	if err != nil {
+		t.Fatalf("New() failed: %v", err)
+	}
+
+	// Port should come from local config
+	if cfg.Port != "8888" {
+		t.Errorf("Port = %q, expected %q (from local config)", cfg.Port, "8888")
+	}
+
+	// API key should come from local config
+	if cfg.APIKey != "local-key" {
+		t.Errorf("APIKey = %q, expected %q (from local config)", cfg.APIKey, "local-key")
+	}
+
+	// Model not set in local, should use default
+	if cfg.Model != DefaultModelName {
+		t.Errorf("Model = %q, expected default %q", cfg.Model, DefaultModelName)
+	}
+}
+
+func TestNew_EnvOverridesDiscoveredConfig(t *testing.T) {
+	// Save original directory
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Failed to get working directory: %v", err)
+	}
+	defer func() {
+		if chdirErr := os.Chdir(origDir); chdirErr != nil {
+			t.Logf("Failed to restore directory: %v", chdirErr)
+		}
+	}()
+
+	// Create temp directory
+	tmpDir := t.TempDir()
+	if chdirErr := os.Chdir(tmpDir); chdirErr != nil {
+		t.Fatalf("Failed to change to temp directory: %v", chdirErr)
+	}
+
+	// Create local config
+	localContent := `port: "9999"
+api_key: "file-key"
+model: "file/model"
+`
+	if writeErr := os.WriteFile("athena.yml", []byte(localContent), 0644); writeErr != nil {
+		t.Fatalf("Failed to write local config: %v", writeErr)
+	}
+
+	// Set env vars (should override discovered config)
+	os.Setenv("ATHENA_PORT", "7000")
+	os.Setenv("ATHENA_API_KEY", "env-key")
+	defer func() {
+		os.Unsetenv("ATHENA_PORT")
+		os.Unsetenv("ATHENA_API_KEY")
+	}()
+
+	cfg, err := New("")
+	if err != nil {
+		t.Fatalf("New() failed: %v", err)
+	}
+
+	// Env should override file
+	if cfg.Port != "7000" {
+		t.Errorf("Port = %q, expected env value %q (env overrides discovered config)", cfg.Port, "7000")
+	}
+	if cfg.APIKey != "env-key" {
+		t.Errorf("APIKey = %q, expected env value %q (env overrides discovered config)", cfg.APIKey, "env-key")
+	}
+
+	// Model not set in env, should use file
+	if cfg.Model != "file/model" {
+		t.Errorf("Model = %q, expected file value %q", cfg.Model, "file/model")
+	}
+}

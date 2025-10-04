@@ -16,8 +16,7 @@ A proxy server that maps Anthropic's API format to OpenAI API format, allowing y
 - 🎯 **Model Mapping**: Configurable mappings for Opus, Sonnet, and Haiku models
 - 🔀 **Provider Routing**: Automatic Groq provider routing for Kimi K2 models
 - ⚙️ **Flexible Configuration**: CLI flags, config files, environment variables, and .env files
-- 🖥️ **Claude Code Integration**: Built-in launcher for seamless Claude Code TUI experience
-- 🚀 **Minimal Dependencies**: Lightweight with only essential external packages (Cobra CLI, YAML, log rotation)
+- 🚀 **Minimal Dependencies**: Lightweight with only essential external packages (Cobra CLI, YAML parser)
 
 ## Quick Start
 
@@ -33,16 +32,17 @@ curl -fsSL https://raw.githubusercontent.com/martinffx/athena/main/install.sh | 
 
 ## Configuration
 
-The proxy looks for configuration in this priority order:
-1. Command line flags (highest priority)
-2. Config files: `~/.config/athena/athena.{yml,json}` or `./athena.{yml,json}`
-3. Environment variables (including `.env` file)
-4. Built-in defaults (lowest priority)
+The proxy looks for configuration in this priority order (highest to lowest):
+1. **Command line flags** - CLI arguments override everything
+2. **Environment variables** - ATHENA_* prefixed env vars
+3. **Local config file** - `./athena.yml` in current directory
+4. **Global config file** - `~/.config/athena/athena.yml`
+5. **Built-in defaults** - Hardcoded fallback values
 
 ### Config File Example (YAML):
 ```yaml
 # ~/.config/athena/athena.yml
-port: "11434"
+port: "12377"
 api_key: "your-openrouter-api-key-here"
 base_url: "https://openrouter.ai/api"
 model: "moonshotai/kimi-k2-0905"
@@ -58,7 +58,7 @@ haiku_model: "anthropic/claude-3.5-haiku"
 For fine-grained control over provider routing, add provider configurations to your YAML config:
 
 ```yaml
-port: "11434"
+port: "12377"
 api_key: "your-openrouter-api-key-here"
 base_url: "https://openrouter.ai/api"
 model: "moonshotai/kimi-k2-0905"
@@ -87,7 +87,7 @@ export OPUS_MODEL="anthropic/claude-3-opus"
 export SONNET_MODEL="anthropic/claude-3.5-sonnet"
 export HAIKU_MODEL="anthropic/claude-3.5-haiku"
 export DEFAULT_MODEL="moonshotai/kimi-k2-0905"
-export PORT="11434"
+export PORT="12377"
 ```
 
 ### .env File:
@@ -101,26 +101,49 @@ HAIKU_MODEL=anthropic/claude-3.5-haiku
 
 ## Usage
 
-### Option 1: Just the proxy server
-```bash
-# Start the proxy server
-athena -api-key YOUR_OPENROUTER_KEY
+### Daemon Management
 
-# In another terminal, configure Claude Code
-export ANTHROPIC_BASE_URL=http://localhost:11434
-export ANTHROPIC_API_KEY=YOUR_OPENROUTER_KEY
-claude
+```bash
+# Run in foreground (default)
+athena
+
+# Run as background daemon
+athena start
+
+# Stop daemon
+athena stop
+
+# Check daemon status
+athena status
+
+# View logs (daemon mode)
+tail -f ~/.athena/athena.log
 ```
 
-### Option 2: Custom configuration
+### Custom Configuration
 ```bash
-# Use specific models and port
-athena \
-  -port 9000 \
-  -api-key YOUR_KEY \
-  -opus-model "openai/gpt-4" \
-  -sonnet-model "google/gemini-pro" \
-  -haiku-model "meta-llama/llama-2-13b-chat"
+# Use specific models and port (foreground)
+athena -port 9000 -api-key YOUR_KEY
+
+# Or run as daemon with custom port
+athena start -port 9000 -api-key YOUR_KEY
+
+# Enable debug logging to see full request/response bodies
+athena --log-level debug
+```
+
+### Using with Claude Code
+
+```bash
+# Start Athena daemon
+athena start
+
+# Configure Claude Code to use the proxy
+export ANTHROPIC_BASE_URL=http://localhost:12377
+export ANTHROPIC_API_KEY=your-openrouter-key
+
+# Run Claude Code
+claude
 ```
 
 ## How It Works
@@ -192,7 +215,7 @@ haiku_model: "google/gemini-pro"
 
 ### Use Claude Code with Local Ollama:
 ```yaml
-base_url: "http://localhost:11434/v1"
+base_url: "http://localhost:12377/v1"
 opus_model: "llama3:70b"
 sonnet_model: "llama3:8b" 
 haiku_model: "llama3:8b"
@@ -212,14 +235,11 @@ athena -port 9000
 echo $OPENROUTER_API_KEY
 
 # Test the proxy directly
-curl -X POST http://localhost:11434/v1/messages \
+curl -X POST http://localhost:12377/v1/messages \
   -H "Content-Type: application/json" \
   -H "X-Api-Key: your-key" \
   -d '{"model":"claude-3-sonnet","messages":[{"role":"user","content":"Hi"}]}'
 ```
-
-### Claude Code not found:
-Install Claude Code from: https://claude.ai/code
 
 ## License
 
