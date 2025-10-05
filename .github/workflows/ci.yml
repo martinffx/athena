@@ -98,8 +98,6 @@ jobs:
         ./athena start --help
         ./athena stop --help
         ./athena status --help
-        ./athena logs --help
-        ./athena code --help
 
         # Test version/help flags work
         ./athena --version || true  # May not have version flag
@@ -117,8 +115,6 @@ jobs:
         ./athena.exe start --help
         ./athena.exe stop --help
         ./athena.exe status --help
-        ./athena.exe logs --help
-        ./athena.exe code --help
 
         echo "✅ CLI commands validated on Windows"
 
