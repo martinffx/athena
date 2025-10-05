@@ -543,11 +543,14 @@ func processStreamDelta(w http.ResponseWriter, flusher http.Flusher, delta map[s
 	contentBlockIndex *int, hasStartedTextBlock *bool, isToolUse *bool,
 	currentToolCallID *string, toolCallJSONMap map[string]string) {
 
-	// Handle tool calls
-	if toolCalls, ok := delta["tool_calls"].([]interface{}); ok && len(toolCalls) > 0 {
+	// Handle tool calls - use parseQwenToolCall to support both formats:
+	// 1. Standard OpenAI tool_calls array (vLLM/OpenRouter)
+	// 2. Qwen-Agent function_call object
+	toolCalls := parseQwenToolCall(delta)
+	if len(toolCalls) > 0 {
 		for _, tc := range toolCalls {
-			toolCall := tc.(map[string]interface{})
-			if id, ok := toolCall["id"].(string); ok && id != *currentToolCallID {
+			// If ID is present and different from current, start new tool call block
+			if tc.ID != "" && tc.ID != *currentToolCallID {
 				// Close previous block if exists
 				if *isToolUse || *hasStartedTextBlock {
 					sendSSE(w, flusher, "content_block_stop", map[string]interface{}{
@@ -558,41 +561,33 @@ func processStreamDelta(w http.ResponseWriter, flusher http.Flusher, delta map[s
 
 				*isToolUse = true
 				*hasStartedTextBlock = false
-				*currentToolCallID = id
+				*currentToolCallID = tc.ID
 				*contentBlockIndex++
-				toolCallJSONMap[id] = ""
-
-				var name string
-				if function, ok := toolCall["function"].(map[string]interface{}); ok {
-					if n, ok := function["name"].(string); ok {
-						name = n
-					}
-				}
+				toolCallJSONMap[tc.ID] = ""
 
 				sendSSE(w, flusher, "content_block_start", map[string]interface{}{
 					"type":  "content_block_start",
 					"index": *contentBlockIndex,
 					"content_block": map[string]interface{}{
 						"type":  TypeToolUse,
-						"id":    id,
-						"name":  name,
+						"id":    tc.ID,
+						"name":  tc.Function.Name,
 						"input": map[string]interface{}{},
 					},
 				})
 			}
 
-			if function, ok := toolCall["function"].(map[string]interface{}); ok {
-				if args, ok := function["arguments"].(string); ok && *currentToolCallID != "" {
-					toolCallJSONMap[*currentToolCallID] += args
-					sendSSE(w, flusher, "content_block_delta", map[string]interface{}{
-						"type":  "content_block_delta",
-						"index": *contentBlockIndex,
-						"delta": map[string]interface{}{
-							"type":         "input_json_delta",
-							"partial_json": args,
-						},
-					})
-				}
+			// Send argument deltas (works for both new tool calls and continuations)
+			if tc.Function.Arguments != "" && *currentToolCallID != "" {
+				toolCallJSONMap[*currentToolCallID] += tc.Function.Arguments
+				sendSSE(w, flusher, "content_block_delta", map[string]interface{}{
+					"type":  "content_block_delta",
+					"index": *contentBlockIndex,
+					"delta": map[string]interface{}{
+						"type":         "input_json_delta",
+						"partial_json": tc.Function.Arguments,
+					},
+				})
 			}
 		}
 	} else if content, ok := delta["content"].(string); ok && content != "" {

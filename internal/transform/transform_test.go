@@ -894,6 +894,175 @@ data: [DONE]
 	}
 }
 
+func TestHandleStreaming_QwenFunctionCallFormat(t *testing.T) {
+	// Test Qwen-Agent function_call format (not tool_calls array)
+	streamData := `data: {"choices":[{"index":0,"delta":{"function_call":{"name":"get_weather","arguments":"{\"city\":"}},"finish_reason":null}]}
+
+data: {"choices":[{"index":0,"delta":{"function_call":{"arguments":"\"Beijing\"}"}},"finish_reason":null}]}
+
+data: [DONE]
+
+`
+
+	resp := &http.Response{
+		StatusCode: 200,
+		Body:       io.NopCloser(strings.NewReader(streamData)),
+		Header:     make(http.Header),
+	}
+
+	w := httptest.NewRecorder()
+	HandleStreaming(w, resp, "qwen/qwen3-coder")
+
+	result := w.Result()
+	defer result.Body.Close()
+
+	if result.StatusCode != 200 {
+		t.Errorf("Status code = %d, expected %d", result.StatusCode, 200)
+	}
+
+	body, _ := io.ReadAll(result.Body)
+	bodyStr := string(body)
+
+	// Verify tool use events
+	if !strings.Contains(bodyStr, "\"type\":\"tool_use\"") {
+		t.Error("Response should contain tool_use content block")
+	}
+
+	// Should have synthetic ID (qwen-tool-*)
+	if !strings.Contains(bodyStr, "\"id\":\"qwen-tool-") {
+		t.Error("Response should contain synthetic qwen-tool ID")
+	}
+
+	// Should have function name
+	if !strings.Contains(bodyStr, "\"name\":\"get_weather\"") {
+		t.Error("Response should contain function name")
+	}
+
+	// Should have input_json_delta events
+	if !strings.Contains(bodyStr, "input_json_delta") {
+		t.Error("Response should contain input_json_delta events")
+	}
+
+	// Should have accumulated arguments
+	if !strings.Contains(bodyStr, "Beijing") {
+		t.Error("Response should contain accumulated arguments")
+	}
+}
+
+func TestHandleStreaming_QwenMultipleToolCalls(t *testing.T) {
+	// Test multiple tool calls using tool_calls array format
+	streamData := `data: {"choices":[{"index":0,"delta":{"tool_calls":[{"id":"call-1","type":"function","function":{"name":"get_weather"}}]},"finish_reason":null}]}
+
+data: {"choices":[{"index":0,"delta":{"tool_calls":[{"function":{"arguments":"{\"city\":\"Tokyo\"}"}}]},"finish_reason":null}]}
+
+data: {"choices":[{"index":0,"delta":{"tool_calls":[{"id":"call-2","type":"function","function":{"name":"get_time"}}]},"finish_reason":null}]}
+
+data: {"choices":[{"index":0,"delta":{"tool_calls":[{"function":{"arguments":"{\"timezone\":\"Asia/Tokyo\"}"}}]},"finish_reason":null}]}
+
+data: [DONE]
+
+`
+
+	resp := &http.Response{
+		StatusCode: 200,
+		Body:       io.NopCloser(strings.NewReader(streamData)),
+		Header:     make(http.Header),
+	}
+
+	w := httptest.NewRecorder()
+	HandleStreaming(w, resp, "qwen/qwen3-coder")
+
+	result := w.Result()
+	defer result.Body.Close()
+
+	body, _ := io.ReadAll(result.Body)
+	bodyStr := string(body)
+
+	// Should have two tool_use blocks
+	toolUseCount := strings.Count(bodyStr, "\"type\":\"tool_use\"")
+	if toolUseCount != 2 {
+		t.Errorf("Expected 2 tool_use blocks, got %d", toolUseCount)
+	}
+
+	// Should have both function names
+	if !strings.Contains(bodyStr, "\"name\":\"get_weather\"") {
+		t.Error("Response should contain get_weather function")
+	}
+	if !strings.Contains(bodyStr, "\"name\":\"get_time\"") {
+		t.Error("Response should contain get_time function")
+	}
+
+	// Should have arguments for both
+	if !strings.Contains(bodyStr, "Tokyo") {
+		t.Error("Response should contain Tokyo argument")
+	}
+	if !strings.Contains(bodyStr, "Asia/Tokyo") {
+		t.Error("Response should contain Asia/Tokyo argument")
+	}
+
+	// Should have at least 3 content_block_stop events (2 tool blocks + message_stop)
+	stops := strings.Count(bodyStr, "content_block_stop")
+	if stops < 2 {
+		t.Errorf("Expected at least 2 content_block_stop events, got %d", stops)
+	}
+}
+
+func TestHandleStreaming_QwenMixedTextAndFunctionCall(t *testing.T) {
+	// Test mixed content: function_call format then text
+	streamData := `data: {"choices":[{"index":0,"delta":{"function_call":{"name":"calculate","arguments":"{\"x\":5}"}},"finish_reason":null}]}
+
+data: {"choices":[{"index":0,"delta":{"content":"Result: "},"finish_reason":null}]}
+
+data: {"choices":[{"index":0,"delta":{"content":"10"},"finish_reason":null}]}
+
+data: [DONE]
+
+`
+
+	resp := &http.Response{
+		StatusCode: 200,
+		Body:       io.NopCloser(strings.NewReader(streamData)),
+		Header:     make(http.Header),
+	}
+
+	w := httptest.NewRecorder()
+	HandleStreaming(w, resp, "qwen/qwen3-coder")
+
+	result := w.Result()
+	defer result.Body.Close()
+
+	body, _ := io.ReadAll(result.Body)
+	bodyStr := string(body)
+
+	// Should have both tool_use and text content blocks
+	if !strings.Contains(bodyStr, "\"type\":\"tool_use\"") {
+		t.Error("Response should contain tool_use content block")
+	}
+
+	if !strings.Contains(bodyStr, "\"type\":\"text\"") {
+		t.Error("Response should contain text content block")
+	}
+
+	// Should have function name
+	if !strings.Contains(bodyStr, "\"name\":\"calculate\"") {
+		t.Error("Response should contain function name")
+	}
+
+	// Should have text content parts
+	if !strings.Contains(bodyStr, "Result: ") {
+		t.Error("Response should contain text content 'Result: '")
+	}
+	if !strings.Contains(bodyStr, "10") {
+		t.Error("Response should contain text content '10'")
+	}
+
+	// Should have content_block_stop for tool use before text starts
+	stops := strings.Count(bodyStr, "content_block_stop")
+	if stops < 2 {
+		t.Errorf("Expected at least 2 content_block_stop events, got %d", stops)
+	}
+}
+
 func TestAnthropicToOpenAI_ProviderRouting(t *testing.T) {
 	tests := []struct {
 		name             string
