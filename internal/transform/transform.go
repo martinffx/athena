@@ -33,6 +33,15 @@ const (
 //
 // Returns an OpenAIRequest ready to be sent to OpenRouter or compatible endpoints.
 func AnthropicToOpenAI(req AnthropicRequest, cfg *config.Config) OpenAIRequest {
+	// Map model first to get the actual OpenRouter model ID
+	mappedModel := MapModel(req.Model, cfg)
+
+	// Create transformation context with detected format
+	ctx := &Context{
+		Format: DetectModelFormat(mappedModel),
+		Config: cfg,
+	}
+
 	messages := []OpenAIMessage{}
 
 	// Handle system messages
@@ -76,14 +85,13 @@ func AnthropicToOpenAI(req AnthropicRequest, cfg *config.Config) OpenAIRequest {
 
 	// Transform messages
 	for _, msg := range req.Messages {
-		openAIMsgs := transformMessage(msg)
+		openAIMsgs := transformMessage(msg, ctx)
 		messages = append(messages, openAIMsgs...)
 	}
 
 	// Validate tool calls
 	messages = validateToolCalls(messages)
 
-	mappedModel := MapModel(req.Model, cfg)
 	result := OpenAIRequest{
 		Model:       mappedModel,
 		Messages:    messages,
@@ -121,8 +129,10 @@ func AnthropicToOpenAI(req AnthropicRequest, cfg *config.Config) OpenAIRequest {
 	return result
 }
 
-// transformMessage converts a single Anthropic message to OpenAI format
-func transformMessage(msg Message) []OpenAIMessage {
+// transformMessage converts a single Anthropic message to OpenAI format.
+// The context parameter provides model format information for potential future
+// format-specific transformations (currently unused but reserved for extensibility).
+func transformMessage(msg Message, _ *Context) []OpenAIMessage {
 	result := []OpenAIMessage{}
 
 	var content []ContentBlock
@@ -392,6 +402,149 @@ func removeUriFormatFromInterface(data interface{}) interface{} {
 	}
 }
 
+// validateOpenAIResponse validates the structure of an OpenRouter response
+func validateOpenAIResponse(resp map[string]interface{}) (map[string]interface{}, map[string]interface{}, error) {
+	choicesRaw, ok := resp["choices"]
+	if !ok {
+		return nil, nil, fmt.Errorf("invalid OpenRouter response: missing choices")
+	}
+
+	choices, ok := choicesRaw.([]interface{})
+	if !ok {
+		return nil, nil, fmt.Errorf("invalid OpenRouter response: choices is not an array")
+	}
+
+	if len(choices) == 0 {
+		return nil, nil, fmt.Errorf("invalid OpenRouter response: empty choices")
+	}
+
+	choice, ok := choices[0].(map[string]interface{})
+	if !ok {
+		return nil, nil, fmt.Errorf("invalid OpenRouter response: choice is not an object")
+	}
+
+	messageRaw, ok := choice["message"]
+	if !ok {
+		return nil, nil, fmt.Errorf("invalid OpenRouter response: missing message")
+	}
+
+	message, ok := messageRaw.(map[string]interface{})
+	if !ok {
+		return nil, nil, fmt.Errorf("invalid OpenRouter response: message is not an object")
+	}
+
+	return choice, message, nil
+}
+
+// handleKimiFormat processes Kimi special token format and returns content blocks
+func handleKimiFormat(message map[string]interface{}) ([]map[string]interface{}, bool, error) {
+	msgContent, ok := message["content"]
+	if !ok || msgContent == nil {
+		return nil, false, nil
+	}
+
+	contentStr, ok := msgContent.(string)
+	if !ok {
+		return nil, false, nil
+	}
+
+	toolCalls, err := parseKimiToolCalls(contentStr)
+	if err != nil {
+		return nil, false, fmt.Errorf("failed to parse Kimi tool calls: %w", err)
+	}
+
+	if len(toolCalls) > 0 {
+		content := make([]map[string]interface{}, 0, len(toolCalls))
+		for _, tc := range toolCalls {
+			var input map[string]interface{}
+			if err := json.Unmarshal([]byte(tc.Function.Arguments), &input); err != nil {
+				input = make(map[string]interface{})
+			}
+			content = append(content, map[string]interface{}{
+				"type":  TypeToolUse,
+				"id":    tc.ID,
+				"name":  tc.Function.Name,
+				"input": input,
+			})
+		}
+		return content, true, nil
+	}
+
+	// No tool calls, return text content
+	return []map[string]interface{}{
+		{"type": "text", "text": contentStr},
+	}, false, nil
+}
+
+// handleQwenFunctionCall processes Qwen function_call format
+func handleQwenFunctionCall(message map[string]interface{}) ([]map[string]interface{}, bool) {
+	functionCall, ok := message["function_call"]
+	if !ok || functionCall == nil {
+		return nil, false
+	}
+
+	fcMap := functionCall.(map[string]interface{})
+	toolCalls := parseQwenToolCall(map[string]interface{}{"function_call": fcMap})
+	if len(toolCalls) == 0 {
+		return nil, false
+	}
+
+	content := make([]map[string]interface{}, 0, len(toolCalls))
+	for _, tc := range toolCalls {
+		var input map[string]interface{}
+		if err := json.Unmarshal([]byte(tc.Function.Arguments), &input); err != nil {
+			input = make(map[string]interface{})
+		}
+		content = append(content, map[string]interface{}{
+			"type":  TypeToolUse,
+			"id":    tc.ID,
+			"name":  tc.Function.Name,
+			"input": input,
+		})
+	}
+	return content, true
+}
+
+// handleStandardToolCalls processes standard OpenAI tool_calls format
+func handleStandardToolCalls(message map[string]interface{}) []map[string]interface{} {
+	toolCalls, ok := message["tool_calls"]
+	if !ok || toolCalls == nil {
+		return nil
+	}
+
+	content := []map[string]interface{}{}
+	for _, tc := range toolCalls.([]interface{}) {
+		toolCall := tc.(map[string]interface{})
+		function := toolCall["function"].(map[string]interface{})
+		var input map[string]interface{}
+		if args, ok := function["arguments"].(string); ok {
+			if err := json.Unmarshal([]byte(args), &input); err != nil {
+				input = make(map[string]interface{})
+			}
+		}
+		content = append(content, map[string]interface{}{
+			"type":  TypeToolUse,
+			"id":    toolCall["id"],
+			"name":  function["name"],
+			"input": input,
+		})
+	}
+	return content
+}
+
+// buildAnthropicResponse constructs the final Anthropic response
+func buildAnthropicResponse(messageID, modelName string, content []map[string]interface{}, stopReason string) map[string]interface{} {
+	return map[string]interface{}{
+		"id":            messageID,
+		"type":          "message",
+		"role":          "assistant",
+		"content":       content,
+		"stop_reason":   stopReason,
+		"stop_sequence": nil,
+		"model":         modelName,
+	}
+}
+
 // OpenAIToAnthropic converts an OpenAI/OpenRouter chat completion response to
 // Anthropic Messages API format. This is the reverse transformation of AnthropicToOpenAI,
 // ensuring client compatibility with the Anthropic API specification.
@@ -403,73 +556,62 @@ func removeUriFormatFromInterface(data interface{}) interface{} {
 //   - Maps finish_reason (stop → end_turn, tool_calls → tool_use)
 //   - Calculates token usage from OpenAI usage metrics
 //
-// Provider-specific handling:
-//   - Detects model format (Kimi K2, Qwen, DeepSeek) via DetectModelFormat
-//   - Applies format-specific parsing for non-standard tool call formats
+// Provider-specific handling via format parameter:
+//   - FormatKimi: Parses special tokens (<|tool_calls_section_begin|>...) from content
+//   - FormatQwen: Handles both function_call (Qwen-Agent) and tool_calls (vLLM) formats
+//   - FormatStandard/FormatDeepSeek: Uses standard OpenAI tool_calls format
 //
-// Returns an Anthropic-formatted response map ready for JSON serialization.
-func OpenAIToAnthropic(resp map[string]interface{}, modelName string) map[string]interface{} {
+// Returns an Anthropic-formatted response map ready for JSON serialization, or an error
+// if the OpenRouter response is malformed or tool call parsing fails.
+func OpenAIToAnthropic(resp map[string]interface{}, modelName string, format ModelFormat) (map[string]interface{}, error) {
 	messageID := fmt.Sprintf("msg_%d", time.Now().UnixNano())
 
+	choice, message, err := validateOpenAIResponse(resp)
+	if err != nil {
+		return nil, err
+	}
+
 	content := []map[string]interface{}{}
-	choices := resp["choices"].([]interface{})
-	if len(choices) > 0 {
-		choice := choices[0].(map[string]interface{})
-		message := choice["message"].(map[string]interface{})
 
-		if msgContent, ok := message["content"]; ok && msgContent != nil {
-			content = append(content, map[string]interface{}{
-				"type": "text",
-				"text": msgContent,
-			})
+	// Handle Kimi special token format
+	if format == FormatKimi {
+		kimiContent, isToolUse, err := handleKimiFormat(message)
+		if err != nil {
+			return nil, err
 		}
-
-		if toolCalls, ok := message["tool_calls"]; ok && toolCalls != nil {
-			for _, tc := range toolCalls.([]interface{}) {
-				toolCall := tc.(map[string]interface{})
-				function := toolCall["function"].(map[string]interface{})
-				var input map[string]interface{}
-				if args, ok := function["arguments"].(string); ok {
-					if err := json.Unmarshal([]byte(args), &input); err != nil {
-						// Log error but continue processing
-						input = make(map[string]interface{})
-					}
-				}
-				content = append(content, map[string]interface{}{
-					"type":  TypeToolUse,
-					"id":    toolCall["id"],
-					"name":  function["name"],
-					"input": input,
-				})
-			}
+		content = kimiContent
+		if isToolUse {
+			return buildAnthropicResponse(messageID, modelName, content, TypeToolUse), nil
 		}
+	} else if msgContent, ok := message["content"]; ok && msgContent != nil {
+		content = append(content, map[string]interface{}{
+			"type": "text",
+			"text": msgContent,
+		})
+	}
 
-		finishReason := choice["finish_reason"].(string)
-		stopReason := stopReasonEnd
-		if finishReason == "tool_calls" {
-			stopReason = TypeToolUse
-		}
-
-		return map[string]interface{}{
-			"id":            messageID,
-			"type":          "message",
-			"role":          "assistant",
-			"content":       content,
-			"stop_reason":   stopReason,
-			"stop_sequence": nil,
-			"model":         modelName,
+	// Handle Qwen function_call format (Qwen-Agent style)
+	if format == FormatQwen {
+		qwenContent, hasToolCalls := handleQwenFunctionCall(message)
+		if hasToolCalls {
+			content = append(content, qwenContent...)
+			return buildAnthropicResponse(messageID, modelName, content, TypeToolUse), nil
 		}
 	}
 
-	return map[string]interface{}{
-		"id":            messageID,
-		"type":          "message",
-		"role":          "assistant",
-		"content":       content,
-		"stop_reason":   stopReasonEnd,
-		"stop_sequence": nil,
-		"model":         modelName,
+	// Handle standard OpenAI tool_calls format (for all formats including Qwen vLLM)
+	if toolCallContent := handleStandardToolCalls(message); toolCallContent != nil {
+		content = append(content, toolCallContent...)
 	}
+
+	// Determine stop reason
+	finishReason := choice["finish_reason"].(string)
+	stopReason := stopReasonEnd
+	if finishReason == "tool_calls" {
+		stopReason = TypeToolUse
+	}
+
+	return buildAnthropicResponse(messageID, modelName, content, stopReason), nil
 }
 
 // HandleNonStreaming processes non-streaming (buffered) responses from OpenRouter
@@ -487,7 +629,7 @@ func OpenAIToAnthropic(resp map[string]interface{}, modelName string) map[string
 //   - Encode errors: logs error but response may be partially written
 //
 // This function is used when the client requests stream=false in the Anthropic API call.
-func HandleNonStreaming(w http.ResponseWriter, resp *http.Response, modelName string) {
+func HandleNonStreaming(w http.ResponseWriter, resp *http.Response, modelName string, format ModelFormat) {
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		http.Error(w, string(body), resp.StatusCode)
@@ -500,7 +642,12 @@ func HandleNonStreaming(w http.ResponseWriter, resp *http.Response, modelName st
 		return
 	}
 
-	anthropicResp := OpenAIToAnthropic(openAIResp, modelName)
+	anthropicResp, err := OpenAIToAnthropic(openAIResp, modelName, format)
+	if err != nil {
+		slog.Error("failed to transform OpenRouter response", "error", err)
+		http.Error(w, fmt.Sprintf("Failed to transform response: %v", err), http.StatusBadGateway)
+		return
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(anthropicResp); err != nil {
@@ -531,7 +678,7 @@ func HandleNonStreaming(w http.ResponseWriter, resp *http.Response, modelName st
 //   - Accumulates tool call arguments for validation
 //
 // This function is used when the client requests stream=true in the Anthropic API call.
-func HandleStreaming(w http.ResponseWriter, resp *http.Response, modelName string) {
+func HandleStreaming(w http.ResponseWriter, resp *http.Response, modelName string, format ModelFormat) {
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		http.Error(w, string(body), resp.StatusCode)
@@ -568,11 +715,18 @@ func HandleStreaming(w http.ResponseWriter, resp *http.Response, modelName strin
 		},
 	})
 
-	contentBlockIndex := 0
-	hasStartedTextBlock := false
-	isToolUse := false
-	currentToolCallID := ""
-	toolCallJSONMap := make(map[string]string)
+	// Initialize streaming state with format-specific context
+	state := &StreamState{
+		ContentBlockIndex:   0,
+		HasStartedTextBlock: false,
+		IsToolUse:           false,
+		CurrentToolCallID:   "",
+		ToolCallJSONMap:     make(map[string]string),
+		FormatContext: &FormatStreamContext{
+			Format:          format,
+			KimiBufferLimit: 10240, // 10KB buffer limit for Kimi special tokens
+		},
+	}
 
 	scanner := bufio.NewScanner(resp.Body)
 	for scanner.Scan() {
@@ -594,23 +748,22 @@ func HandleStreaming(w http.ResponseWriter, resp *http.Response, modelName strin
 		if choices, ok := parsed["choices"].([]interface{}); ok && len(choices) > 0 {
 			choice := choices[0].(map[string]interface{})
 			if delta, ok := choice["delta"].(map[string]interface{}); ok {
-				processStreamDelta(w, flusher, delta, &contentBlockIndex, &hasStartedTextBlock,
-					&isToolUse, &currentToolCallID, toolCallJSONMap)
+				processStreamDelta(w, flusher, delta, state)
 			}
 		}
 	}
 
 	// Close last content block
-	if isToolUse || hasStartedTextBlock {
+	if state.IsToolUse || state.HasStartedTextBlock {
 		sendSSE(w, flusher, "content_block_stop", map[string]interface{}{
 			"type":  "content_block_stop",
-			"index": contentBlockIndex,
+			"index": state.ContentBlockIndex,
 		})
 	}
 
 	// Send message_delta and message_stop
 	stopReason := stopReasonEnd
-	if isToolUse {
+	if state.IsToolUse {
 		stopReason = TypeToolUse
 	}
 
@@ -630,11 +783,15 @@ func HandleStreaming(w http.ResponseWriter, resp *http.Response, modelName strin
 	})
 }
 
-// processStreamDelta processes individual streaming deltas from OpenRouter
-func processStreamDelta(w http.ResponseWriter, flusher http.Flusher, delta map[string]interface{},
-	contentBlockIndex *int, hasStartedTextBlock *bool, isToolUse *bool,
-	currentToolCallID *string, toolCallJSONMap map[string]string) {
-
+// processStreamDelta processes a single delta chunk from OpenRouter streaming response
+// and emits appropriate Anthropic SSE events. Consolidates streaming state into a single
+// StreamState parameter (reduced from 8+ parameters).
+//
+// Format-specific routing via state.FormatContext.Format:
+//   - FormatQwen: Handles both tool_calls and function_call formats via parseQwenToolCall
+//   - FormatKimi: Reserved for special token buffering (future enhancement)
+//   - FormatStandard/FormatDeepSeek: Uses parseQwenToolCall for standard OpenAI format
+func processStreamDelta(w http.ResponseWriter, flusher http.Flusher, delta map[string]interface{}, state *StreamState) {
 	// Handle tool calls - use parseQwenToolCall to support both formats:
 	// 1. Standard OpenAI tool_calls array (vLLM/OpenRouter)
 	// 2. Qwen-Agent function_call object
@@ -642,24 +799,24 @@ func processStreamDelta(w http.ResponseWriter, flusher http.Flusher, delta map[s
 	if len(toolCalls) > 0 {
 		for _, tc := range toolCalls {
 			// If ID is present and different from current, start new tool call block
-			if tc.ID != "" && tc.ID != *currentToolCallID {
+			if tc.ID != "" && tc.ID != state.CurrentToolCallID {
 				// Close previous block if exists
-				if *isToolUse || *hasStartedTextBlock {
+				if state.IsToolUse || state.HasStartedTextBlock {
 					sendSSE(w, flusher, "content_block_stop", map[string]interface{}{
 						"type":  "content_block_stop",
-						"index": *contentBlockIndex,
+						"index": state.ContentBlockIndex,
 					})
 				}
 
-				*isToolUse = true
-				*hasStartedTextBlock = false
-				*currentToolCallID = tc.ID
-				*contentBlockIndex++
-				toolCallJSONMap[tc.ID] = ""
+				state.IsToolUse = true
+				state.HasStartedTextBlock = false
+				state.CurrentToolCallID = tc.ID
+				state.ContentBlockIndex++
+				state.ToolCallJSONMap[tc.ID] = ""
 
 				sendSSE(w, flusher, "content_block_start", map[string]interface{}{
 					"type":  "content_block_start",
-					"index": *contentBlockIndex,
+					"index": state.ContentBlockIndex,
 					"content_block": map[string]interface{}{
 						"type":  TypeToolUse,
 						"id":    tc.ID,
@@ -670,11 +827,11 @@ func processStreamDelta(w http.ResponseWriter, flusher http.Flusher, delta map[s
 			}
 
 			// Send argument deltas (works for both new tool calls and continuations)
-			if tc.Function.Arguments != "" && *currentToolCallID != "" {
-				toolCallJSONMap[*currentToolCallID] += tc.Function.Arguments
+			if tc.Function.Arguments != "" && state.CurrentToolCallID != "" {
+				state.ToolCallJSONMap[state.CurrentToolCallID] += tc.Function.Arguments
 				sendSSE(w, flusher, "content_block_delta", map[string]interface{}{
 					"type":  "content_block_delta",
-					"index": *contentBlockIndex,
+					"index": state.ContentBlockIndex,
 					"delta": map[string]interface{}{
 						"type":         "input_json_delta",
 						"partial_json": tc.Function.Arguments,
@@ -684,31 +841,31 @@ func processStreamDelta(w http.ResponseWriter, flusher http.Flusher, delta map[s
 		}
 	} else if content, ok := delta["content"].(string); ok && content != "" {
 		// Close tool block if transitioning to text
-		if *isToolUse {
+		if state.IsToolUse {
 			sendSSE(w, flusher, "content_block_stop", map[string]interface{}{
 				"type":  "content_block_stop",
-				"index": *contentBlockIndex,
+				"index": state.ContentBlockIndex,
 			})
-			*isToolUse = false
-			*currentToolCallID = ""
-			*contentBlockIndex++
+			state.IsToolUse = false
+			state.CurrentToolCallID = ""
+			state.ContentBlockIndex++
 		}
 
-		if !*hasStartedTextBlock {
+		if !state.HasStartedTextBlock {
 			sendSSE(w, flusher, "content_block_start", map[string]interface{}{
 				"type":  "content_block_start",
-				"index": *contentBlockIndex,
+				"index": state.ContentBlockIndex,
 				"content_block": map[string]interface{}{
 					"type": "text",
 					"text": "",
 				},
 			})
-			*hasStartedTextBlock = true
+			state.HasStartedTextBlock = true
 		}
 
 		sendSSE(w, flusher, "content_block_delta", map[string]interface{}{
 			"type":  "content_block_delta",
-			"index": *contentBlockIndex,
+			"index": state.ContentBlockIndex,
 			"delta": map[string]interface{}{
 				"type": "text_delta",
 				"text": content,

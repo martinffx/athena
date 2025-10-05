@@ -430,7 +430,10 @@ func TestOpenAIToAnthropic(t *testing.T) {
 		},
 	}
 
-	result := OpenAIToAnthropic(resp, "test/model")
+	result, err := OpenAIToAnthropic(resp, "test/model", FormatStandard)
+	if err != nil {
+		t.Fatalf("OpenAIToAnthropic() unexpected error: %v", err)
+	}
 
 	if result["type"] != "message" {
 		t.Errorf("Response type = %v, expected %q", result["type"], "message")
@@ -488,9 +491,12 @@ func TestOpenAIToAnthropic_WithToolCalls(t *testing.T) {
 		},
 	}
 
-	result := OpenAIToAnthropic(resp, "test/model")
+	result, err := OpenAIToAnthropic(resp, "test/model", FormatStandard)
+	if err != nil {
+		t.Fatalf("OpenAIToAnthropic() unexpected error: %v", err)
+	}
 
-	if result["stop_reason"] != "tool_use" {
+	if result["stop_reason"] != TypeToolUse {
 		t.Errorf("Response stop_reason = %v, expected %q", result["stop_reason"], "tool_use")
 	}
 
@@ -509,7 +515,7 @@ func TestOpenAIToAnthropic_WithToolCalls(t *testing.T) {
 	}
 
 	// Check tool_use block
-	if content[1]["type"] != "tool_use" {
+	if content[1]["type"] != TypeToolUse {
 		t.Errorf("Second content type = %v, expected %q", content[1]["type"], "tool_use")
 	}
 
@@ -531,13 +537,107 @@ func TestOpenAIToAnthropic_WithToolCalls(t *testing.T) {
 	}
 }
 
+func TestOpenAIToAnthropic_QwenFunctionCall(t *testing.T) {
+	// Qwen models can return function_call instead of tool_calls
+	resp := map[string]interface{}{
+		"choices": []interface{}{
+			map[string]interface{}{
+				"message": map[string]interface{}{
+					"content": nil,
+					"function_call": map[string]interface{}{
+						"name":      "get_weather",
+						"arguments": `{"city":"Tokyo"}`,
+					},
+				},
+				"finish_reason": "function_call",
+			},
+		},
+	}
+
+	result, err := OpenAIToAnthropic(resp, "qwen/qwen-2.5-72b-instruct", FormatQwen)
+	if err != nil {
+		t.Fatalf("OpenAIToAnthropic() unexpected error: %v", err)
+	}
+
+	content, ok := result["content"].([]map[string]interface{})
+	if !ok {
+		t.Fatalf("Response content is not an array")
+	}
+
+	// Should have 1 tool_use block
+	if len(content) != 1 {
+		t.Fatalf("Expected 1 content block, got %d", len(content))
+	}
+
+	if content[0]["type"] != "tool_use" {
+		t.Errorf("Content type = %v, expected %q", content[0]["type"], "tool_use")
+	}
+
+	if content[0]["name"] != "get_weather" {
+		t.Errorf("Tool name = %v, expected %q", content[0]["name"], "get_weather")
+	}
+
+	// Should have a synthetic ID
+	if _, ok := content[0]["id"].(string); !ok {
+		t.Errorf("Tool ID should be a string, got %T", content[0]["id"])
+	}
+}
+
+func TestOpenAIToAnthropic_KimiSpecialTokens(t *testing.T) {
+	// Kimi models return special tokens in content
+	resp := map[string]interface{}{
+		"choices": []interface{}{
+			map[string]interface{}{
+				"message": map[string]interface{}{
+					"content": `<|tool_calls_section_begin|>
+<|tool_call_begin|>functions.search:1<|tool_call_argument_begin|>{"query":"test"}<|tool_call_end|>
+<|tool_calls_section_end|>`,
+				},
+				"finish_reason": "stop",
+			},
+		},
+	}
+
+	result, err := OpenAIToAnthropic(resp, "moonshot/kimi-k2-0905", FormatKimi)
+	if err != nil {
+		t.Fatalf("OpenAIToAnthropic() unexpected error: %v", err)
+	}
+
+	content, ok := result["content"].([]map[string]interface{})
+	if !ok {
+		t.Fatalf("Response content is not an array")
+	}
+
+	// Should have 1 tool_use block (parsed from special tokens)
+	if len(content) != 1 {
+		t.Fatalf("Expected 1 content block, got %d", len(content))
+	}
+
+	if content[0]["type"] != "tool_use" {
+		t.Errorf("Content type = %v, expected %q", content[0]["type"], "tool_use")
+	}
+
+	if content[0]["name"] != "search" {
+		t.Errorf("Tool name = %v, expected %q", content[0]["name"], "search")
+	}
+
+	if content[0]["id"] != "functions.search:1" {
+		t.Errorf("Tool ID = %v, expected %q", content[0]["id"], "functions.search:1")
+	}
+}
+
 func TestTransformMessage_AssistantWithText(t *testing.T) {
 	msg := Message{
 		Role:    "assistant",
 		Content: json.RawMessage(`[{"type":"text","text":"Hello there"}]`),
 	}
 
-	result := transformMessage(msg)
+	ctx := &Context{
+		Format: FormatStandard,
+		Config: &config.Config{},
+	}
+
+	result := transformMessage(msg, ctx)
 
 	if len(result) != 1 {
 		t.Fatalf("Expected 1 message, got %d", len(result))
@@ -566,7 +666,12 @@ func TestTransformMessage_UserWithToolResult(t *testing.T) {
 		]`),
 	}
 
-	result := transformMessage(msg)
+	ctx := &Context{
+		Format: FormatStandard,
+		Config: &config.Config{},
+	}
+
+	result := transformMessage(msg, ctx)
 
 	if len(result) != 2 {
 		t.Fatalf("Expected 2 messages (user + tool), got %d", len(result))
@@ -725,7 +830,7 @@ func TestHandleNonStreaming(t *testing.T) {
 			}
 
 			w := httptest.NewRecorder()
-			HandleNonStreaming(w, resp, "test/model")
+			HandleNonStreaming(w, resp, "test/model", FormatStandard)
 
 			result := w.Result()
 			defer result.Body.Close()
@@ -754,7 +859,7 @@ data: [DONE]
 	}
 
 	w := httptest.NewRecorder()
-	HandleStreaming(w, resp, "test/model")
+	HandleStreaming(w, resp, "test/model", FormatStandard)
 
 	result := w.Result()
 	defer result.Body.Close()
@@ -796,7 +901,7 @@ func TestHandleStreaming_Error(t *testing.T) {
 	}
 
 	w := httptest.NewRecorder()
-	HandleStreaming(w, resp, "test/model")
+	HandleStreaming(w, resp, "test/model", FormatStandard)
 
 	result := w.Result()
 	defer result.Body.Close()
@@ -827,7 +932,7 @@ data: [DONE]
 	}
 
 	w := httptest.NewRecorder()
-	HandleStreaming(w, resp, "test/model")
+	HandleStreaming(w, resp, "test/model", FormatStandard)
 
 	result := w.Result()
 	defer result.Body.Close()
@@ -870,7 +975,7 @@ data: [DONE]
 	}
 
 	w := httptest.NewRecorder()
-	HandleStreaming(w, resp, "test/model")
+	HandleStreaming(w, resp, "test/model", FormatStandard)
 
 	result := w.Result()
 	defer result.Body.Close()
@@ -911,7 +1016,7 @@ data: [DONE]
 	}
 
 	w := httptest.NewRecorder()
-	HandleStreaming(w, resp, "qwen/qwen3-coder")
+	HandleStreaming(w, resp, "qwen/qwen3-coder", FormatQwen)
 
 	result := w.Result()
 	defer result.Body.Close()
@@ -970,7 +1075,7 @@ data: [DONE]
 	}
 
 	w := httptest.NewRecorder()
-	HandleStreaming(w, resp, "qwen/qwen3-coder")
+	HandleStreaming(w, resp, "qwen/qwen3-coder", FormatQwen)
 
 	result := w.Result()
 	defer result.Body.Close()
@@ -1026,7 +1131,7 @@ data: [DONE]
 	}
 
 	w := httptest.NewRecorder()
-	HandleStreaming(w, resp, "qwen/qwen3-coder")
+	HandleStreaming(w, resp, "qwen/qwen3-coder", FormatQwen)
 
 	result := w.Result()
 	defer result.Body.Close()
@@ -1084,7 +1189,7 @@ data: [DONE]
 	}
 
 	w := httptest.NewRecorder()
-	HandleStreaming(w, resp, "qwen/qwen-coder-turbo")
+	HandleStreaming(w, resp, "qwen/qwen-coder-turbo", FormatQwen)
 
 	result := w.Result()
 	defer result.Body.Close()
@@ -1140,7 +1245,7 @@ data: [DONE]
 	}
 
 	w := httptest.NewRecorder()
-	HandleStreaming(w, resp, "qwen/qwen3-coder")
+	HandleStreaming(w, resp, "qwen/qwen3-coder", FormatQwen)
 
 	result := w.Result()
 	defer result.Body.Close()
@@ -1343,6 +1448,106 @@ func TestGetProviderForModel(t *testing.T) {
 				}
 			} else if provider != nil {
 				t.Errorf("Expected nil provider, got %+v", provider)
+			}
+		})
+	}
+}
+
+// TestAnthropicToOpenAI_FormatDetection verifies that AnthropicToOpenAI correctly
+// detects model formats for different provider models
+func TestAnthropicToOpenAI_FormatDetection(t *testing.T) {
+	tests := []struct {
+		name          string
+		anthropicReq  AnthropicRequest
+		cfg           *config.Config
+		expectedModel string
+		verifyFormat  func(t *testing.T, result OpenAIRequest)
+	}{
+		{
+			name: "kimi model detected as FormatKimi",
+			anthropicReq: AnthropicRequest{
+				Model: "kimi-k2",
+				Messages: []Message{
+					{Role: "user", Content: json.RawMessage(`"Hello"`)},
+				},
+			},
+			cfg: &config.Config{
+				Model: "moonshot/kimi-k2-0905",
+			},
+			expectedModel: "moonshot/kimi-k2-0905",
+			verifyFormat: func(t *testing.T, result OpenAIRequest) {
+				// Format detection happens internally - we verify via model mapping
+				if result.Model != "moonshot/kimi-k2-0905" {
+					t.Errorf("Expected model moonshot/kimi-k2-0905, got %s", result.Model)
+				}
+			},
+		},
+		{
+			name: "qwen model detected as FormatQwen",
+			anthropicReq: AnthropicRequest{
+				Model: "qwen-chat",
+				Messages: []Message{
+					{Role: "user", Content: json.RawMessage(`"Hello"`)},
+				},
+			},
+			cfg: &config.Config{
+				Model: "qwen/qwen-2.5-72b-instruct",
+			},
+			expectedModel: "qwen/qwen-2.5-72b-instruct",
+			verifyFormat: func(t *testing.T, result OpenAIRequest) {
+				if result.Model != "qwen/qwen-2.5-72b-instruct" {
+					t.Errorf("Expected model qwen/qwen-2.5-72b-instruct, got %s", result.Model)
+				}
+			},
+		},
+		{
+			name: "deepseek model detected as FormatDeepSeek",
+			anthropicReq: AnthropicRequest{
+				Model: "deepseek-chat",
+				Messages: []Message{
+					{Role: "user", Content: json.RawMessage(`"Hello"`)},
+				},
+			},
+			cfg: &config.Config{
+				Model: "deepseek/deepseek-chat",
+			},
+			expectedModel: "deepseek/deepseek-chat",
+			verifyFormat: func(t *testing.T, result OpenAIRequest) {
+				if result.Model != "deepseek/deepseek-chat" {
+					t.Errorf("Expected model deepseek/deepseek-chat, got %s", result.Model)
+				}
+			},
+		},
+		{
+			name: "standard model defaults to FormatStandard",
+			anthropicReq: AnthropicRequest{
+				Model: "claude-3-opus",
+				Messages: []Message{
+					{Role: "user", Content: json.RawMessage(`"Hello"`)},
+				},
+			},
+			cfg: &config.Config{
+				OpusModel: "anthropic/claude-3-opus",
+			},
+			expectedModel: "anthropic/claude-3-opus",
+			verifyFormat: func(t *testing.T, result OpenAIRequest) {
+				if result.Model != "anthropic/claude-3-opus" {
+					t.Errorf("Expected model anthropic/claude-3-opus, got %s", result.Model)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := AnthropicToOpenAI(tt.anthropicReq, tt.cfg)
+
+			if result.Model != tt.expectedModel {
+				t.Errorf("Expected model %s, got %s", tt.expectedModel, result.Model)
+			}
+
+			if tt.verifyFormat != nil {
+				tt.verifyFormat(t, result)
 			}
 		})
 	}

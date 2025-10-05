@@ -108,6 +108,9 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 	// Transform to OpenAI format
 	openAIReq := transform.AnthropicToOpenAI(req, s.cfg)
 
+	// Detect model format for response transformation
+	modelFormat := transform.DetectModelFormat(openAIReq.Model)
+
 	// Log provider routing if configured
 	providerInfo := "default"
 	if openAIReq.Provider != nil && len(openAIReq.Provider.Order) > 0 {
@@ -118,6 +121,7 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 		"from_model", req.Model,
 		"to_model", openAIReq.Model,
 		"provider", providerInfo,
+		"format", modelFormat.String(),
 	)
 
 	openAIBody, err := json.Marshal(openAIReq)
@@ -192,8 +196,8 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 
 	// Handle response based on streaming
 	if req.Stream {
-		transform.HandleStreaming(w, resp, openAIReq.Model)
+		transform.HandleStreaming(w, resp, openAIReq.Model, modelFormat)
 	} else {
-		transform.HandleNonStreaming(w, resp, openAIReq.Model)
+		transform.HandleNonStreaming(w, resp, openAIReq.Model, modelFormat)
 	}
 }
