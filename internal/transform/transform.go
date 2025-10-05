@@ -19,7 +19,19 @@ const (
 	stopReasonEnd   = "end_turn"
 )
 
-// AnthropicToOpenAI converts Anthropic request to OpenAI format
+// AnthropicToOpenAI converts an Anthropic Messages API request to OpenAI/OpenRouter
+// chat completions format. This transformation handles system messages, content blocks,
+// tool definitions, and provider routing.
+//
+// The conversion process:
+//   - Extracts system messages from Anthropic format and prepends to messages array
+//   - Transforms content blocks (text, tool_use, tool_result) to OpenAI format
+//   - Validates tool calls have matching tool responses
+//   - Maps Anthropic model names (claude-3-opus) to configured OpenRouter models
+//   - Cleans JSON schemas by removing unsupported "format": "uri" properties
+//   - Applies provider-specific routing configuration
+//
+// Returns an OpenAIRequest ready to be sent to OpenRouter or compatible endpoints.
 func AnthropicToOpenAI(req AnthropicRequest, cfg *config.Config) OpenAIRequest {
 	messages := []OpenAIMessage{}
 
@@ -279,7 +291,21 @@ func validateToolCalls(messages []OpenAIMessage) []OpenAIMessage {
 	return validated
 }
 
-// MapModel maps Anthropic model names to configured OpenRouter models
+// MapModel maps Anthropic model names to configured OpenRouter model identifiers.
+// Provides intelligent routing based on model tier detection:
+//
+//   - Models containing "opus" → cfg.OpusModel (high-end tier)
+//   - Models containing "sonnet" → cfg.SonnetModel (mid-tier)
+//   - Models containing "haiku" → cfg.HaikuModel (fast/cheap tier)
+//   - Models with "/" → pass-through (already OpenRouter format)
+//   - Unknown models → cfg.Model (default fallback)
+//
+// Example mappings:
+//   - "claude-3-opus-20240229" → "anthropic/claude-3-opus"
+//   - "claude-3-5-sonnet-20241022" → "openai/gpt-4"
+//   - "openai/gpt-4o" → "openai/gpt-4o" (pass-through)
+//
+// Returns the OpenRouter model ID to use for the API request.
 func MapModel(anthropicModel string, cfg *config.Config) string {
 	if strings.Contains(anthropicModel, "/") {
 		return anthropicModel
@@ -297,7 +323,22 @@ func MapModel(anthropicModel string, cfg *config.Config) string {
 	}
 }
 
-// GetProviderForModel returns the provider configuration for a given model
+// GetProviderForModel returns the provider configuration for a given Anthropic model
+// name. This enables routing different model tiers through different API providers
+// with distinct base URLs and API keys.
+//
+// Provider selection follows the same tier detection as MapModel:
+//   - Models containing "opus" → cfg.OpusProvider
+//   - Models containing "sonnet" → cfg.SonnetProvider
+//   - Models containing "haiku" → cfg.HaikuProvider
+//   - All other models → cfg.DefaultProvider
+//
+// Example use cases:
+//   - Route opus through Anthropic directly (higher rate limits)
+//   - Route sonnet through OpenRouter (cost optimization)
+//   - Route haiku through local vLLM (low latency)
+//
+// Returns nil if no provider is configured for the model tier.
 func GetProviderForModel(anthropicModel string, cfg *config.Config) *config.ProviderConfig {
 	if strings.Contains(anthropicModel, "/") {
 		// Direct model ID - use default provider
@@ -351,7 +392,22 @@ func removeUriFormatFromInterface(data interface{}) interface{} {
 	}
 }
 
-// OpenAIToAnthropic converts OpenAI response to Anthropic format
+// OpenAIToAnthropic converts an OpenAI/OpenRouter chat completion response to
+// Anthropic Messages API format. This is the reverse transformation of AnthropicToOpenAI,
+// ensuring client compatibility with the Anthropic API specification.
+//
+// The conversion process:
+//   - Generates synthetic message ID and timestamp
+//   - Extracts text content from choices[0].message.content
+//   - Transforms tool_calls to Anthropic tool_use content blocks
+//   - Maps finish_reason (stop → end_turn, tool_calls → tool_use)
+//   - Calculates token usage from OpenAI usage metrics
+//
+// Provider-specific handling:
+//   - Detects model format (Kimi K2, Qwen, DeepSeek) via DetectModelFormat
+//   - Applies format-specific parsing for non-standard tool call formats
+//
+// Returns an Anthropic-formatted response map ready for JSON serialization.
 func OpenAIToAnthropic(resp map[string]interface{}, modelName string) map[string]interface{} {
 	messageID := fmt.Sprintf("msg_%d", time.Now().UnixNano())
 
@@ -416,7 +472,21 @@ func OpenAIToAnthropic(resp map[string]interface{}, modelName string) map[string
 	}
 }
 
-// HandleNonStreaming processes non-streaming responses from OpenRouter
+// HandleNonStreaming processes non-streaming (buffered) responses from OpenRouter
+// and writes the transformed Anthropic-formatted response to the client.
+//
+// Processing flow:
+//  1. Validates HTTP status code (returns error if non-200)
+//  2. Decodes OpenAI JSON response body
+//  3. Transforms to Anthropic format via OpenAIToAnthropic
+//  4. Writes JSON response with appropriate Content-Type header
+//
+// Error handling:
+//   - Non-200 status: forwards error body and status to client
+//   - JSON decode errors: returns 500 Internal Server Error
+//   - Encode errors: logs error but response may be partially written
+//
+// This function is used when the client requests stream=false in the Anthropic API call.
 func HandleNonStreaming(w http.ResponseWriter, resp *http.Response, modelName string) {
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -438,7 +508,29 @@ func HandleNonStreaming(w http.ResponseWriter, resp *http.Response, modelName st
 	}
 }
 
-// HandleStreaming processes streaming responses from OpenRouter
+// HandleStreaming processes Server-Sent Events (SSE) streaming responses from
+// OpenRouter and transforms them into Anthropic Messages API streaming format.
+//
+// Processing flow:
+//  1. Validates HTTP status code (returns error if non-200)
+//  2. Sets up SSE headers (text/event-stream, no caching)
+//  3. Processes OpenAI delta events line-by-line with buffering
+//  4. Transforms to Anthropic SSE events (message_start, content_block_*, message_delta)
+//  5. Handles format-specific tool calling (Kimi K2, Qwen, standard OpenAI)
+//  6. Manages content block state (text vs tool_use transitions)
+//  7. Emits message_stop event when stream completes
+//
+// Provider-specific streaming:
+//   - Standard OpenAI: tool_calls array with incremental deltas
+//   - Qwen models: function_call object format with synthetic IDs
+//   - Kimi K2: special token format requiring buffering
+//
+// State management:
+//   - Tracks current content block index and type
+//   - Buffers incomplete SSE lines across network packets
+//   - Accumulates tool call arguments for validation
+//
+// This function is used when the client requests stream=true in the Anthropic API call.
 func HandleStreaming(w http.ResponseWriter, resp *http.Response, modelName string) {
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -543,11 +635,14 @@ func processStreamDelta(w http.ResponseWriter, flusher http.Flusher, delta map[s
 	contentBlockIndex *int, hasStartedTextBlock *bool, isToolUse *bool,
 	currentToolCallID *string, toolCallJSONMap map[string]string) {
 
-	// Handle tool calls
-	if toolCalls, ok := delta["tool_calls"].([]interface{}); ok && len(toolCalls) > 0 {
+	// Handle tool calls - use parseQwenToolCall to support both formats:
+	// 1. Standard OpenAI tool_calls array (vLLM/OpenRouter)
+	// 2. Qwen-Agent function_call object
+	toolCalls := parseQwenToolCall(delta)
+	if len(toolCalls) > 0 {
 		for _, tc := range toolCalls {
-			toolCall := tc.(map[string]interface{})
-			if id, ok := toolCall["id"].(string); ok && id != *currentToolCallID {
+			// If ID is present and different from current, start new tool call block
+			if tc.ID != "" && tc.ID != *currentToolCallID {
 				// Close previous block if exists
 				if *isToolUse || *hasStartedTextBlock {
 					sendSSE(w, flusher, "content_block_stop", map[string]interface{}{
@@ -558,41 +653,33 @@ func processStreamDelta(w http.ResponseWriter, flusher http.Flusher, delta map[s
 
 				*isToolUse = true
 				*hasStartedTextBlock = false
-				*currentToolCallID = id
+				*currentToolCallID = tc.ID
 				*contentBlockIndex++
-				toolCallJSONMap[id] = ""
-
-				var name string
-				if function, ok := toolCall["function"].(map[string]interface{}); ok {
-					if n, ok := function["name"].(string); ok {
-						name = n
-					}
-				}
+				toolCallJSONMap[tc.ID] = ""
 
 				sendSSE(w, flusher, "content_block_start", map[string]interface{}{
 					"type":  "content_block_start",
 					"index": *contentBlockIndex,
 					"content_block": map[string]interface{}{
 						"type":  TypeToolUse,
-						"id":    id,
-						"name":  name,
+						"id":    tc.ID,
+						"name":  tc.Function.Name,
 						"input": map[string]interface{}{},
 					},
 				})
 			}
 
-			if function, ok := toolCall["function"].(map[string]interface{}); ok {
-				if args, ok := function["arguments"].(string); ok && *currentToolCallID != "" {
-					toolCallJSONMap[*currentToolCallID] += args
-					sendSSE(w, flusher, "content_block_delta", map[string]interface{}{
-						"type":  "content_block_delta",
-						"index": *contentBlockIndex,
-						"delta": map[string]interface{}{
-							"type":         "input_json_delta",
-							"partial_json": args,
-						},
-					})
-				}
+			// Send argument deltas (works for both new tool calls and continuations)
+			if tc.Function.Arguments != "" && *currentToolCallID != "" {
+				toolCallJSONMap[*currentToolCallID] += tc.Function.Arguments
+				sendSSE(w, flusher, "content_block_delta", map[string]interface{}{
+					"type":  "content_block_delta",
+					"index": *contentBlockIndex,
+					"delta": map[string]interface{}{
+						"type":         "input_json_delta",
+						"partial_json": tc.Function.Arguments,
+					},
+				})
 			}
 		}
 	} else if content, ok := delta["content"].(string); ok && content != "" {

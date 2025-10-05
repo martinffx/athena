@@ -1,6 +1,8 @@
 package transform
 
-import "testing"
+import (
+	"testing"
+)
 
 func TestDetectModelFormat(t *testing.T) {
 	tests := []struct {

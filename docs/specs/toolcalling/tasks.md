@@ -5,12 +5,22 @@ This document provides a human-readable checklist for implementing the tool call
 ## Progress Overview
 
 - **Total Phases**: 7
-- **Completed Phases**: 2 (Foundation, Provider Detection)
+- **Completed Phases**: 4 (Foundation, Provider Detection, Kimi Parsing, Qwen Parsing)
+- **In Progress**: Phase 5 (Integration - Qwen integrated, StreamState refactoring pending)
 - **Total Tasks**: 34
-- **Completed Tasks**: 6
-- **Progress**: 18% (6/34 tasks)
+- **Completed Tasks**: 15
+- **Progress**: 44% (15/34 tasks)
 - **Parallel Execution**: Phases 3 (Kimi) and 4 (Qwen) can run in parallel
 - **Critical Path**: Phase 1 → Phase 2 → Phase 5 (Integration) → Phase 6 (Error Handling) → Phase 7 (Documentation)
+
+## Recent Work Completed
+
+- ✅ Qwen dual-format tool calling (vLLM tool_calls + Qwen-Agent function_call)
+- ✅ Kimi K2 special token format parsing with buffering
+- ✅ Provider-specific streaming support
+- ✅ Atomic counter for synthetic ID generation
+- ✅ Comprehensive godoc documentation added
+- ⚠️  Integration uses direct function calls (StreamState refactoring recommended)
 
 ---
 
@@ -75,14 +85,14 @@ This document provides a human-readable checklist for implementing the tool call
 
 ---
 
-## Phase 3: Kimi K2 Format Parsing
+## Phase 3: Kimi K2 Format Parsing ✅
 
 **Dependencies**: Phase 1 (types), Phase 2 (detection)
 **Parallel**: Can run in parallel with Phase 4
 
 ### ✅ Tasks
 
-- [ ] **3.1** Implement parseKimiToolCalls function (TDD)
+- [x] **3.1** Implement parseKimiToolCalls function (TDD)
   - **Test**: Write 10 test cases in `providers_test.go`
     - Single tool call
     - Multiple tool calls
@@ -98,14 +108,14 @@ This document provides a human-readable checklist for implementing the tool call
     - Parse ID (`functions.{name}:{idx}`) and JSON arguments
     - Return error for malformed tokens
   - **Refactor**: Optimize regex patterns
-  - **File**: `internal/transform/providers.go`
+  - **File**: `internal/transform/kimi.go`
 
-- [ ] **3.2** Create internal/transform/streaming.go file
+- [x] **3.2** Create internal/transform/streaming.go file
   - Create file with `package transform` declaration
   - Add imports: `net/http`, `strings`, `fmt`, `encoding/json`
   - **File**: `internal/transform/streaming.go`
 
-- [ ] **3.3** Implement handleKimiStreaming function (TDD)
+- [x] **3.3** Implement handleKimiStreaming function (TDD)
   - **Test**: Write 5 test cases in `streaming_test.go`
     - Complete section in one chunk
     - Section split across 2 chunks
@@ -120,18 +130,18 @@ This document provides a human-readable checklist for implementing the tool call
     - Emit Anthropic SSE events
     - Clear buffer after emission
   - **Refactor**: Extract event emission helpers
-  - **File**: `internal/transform/streaming.go`
+  - **File**: `internal/transform/kimi.go`
 
 ---
 
-## Phase 4: Qwen Hermes Format Parsing
+## Phase 4: Qwen Hermes Format Parsing ✅
 
 **Dependencies**: Phase 1 (types)
 **Parallel**: Can run in parallel with Phase 3
 
 ### ✅ Tasks
 
-- [ ] **4.1** Implement parseQwenToolCall function (TDD)
+- [x] **4.1** Implement parseQwenToolCall function (TDD)
   - **Test**: Write 8 test cases in `providers_test.go`
     - `tool_calls` array format
     - `function_call` object format
@@ -146,23 +156,24 @@ This document provides a human-readable checklist for implementing the tool call
     - Generate synthetic ID for `function_call`
     - Return unified ToolCall array
   - **Refactor**: Extract ID generation helper
-  - **File**: `internal/transform/providers.go`
+  - **File**: `internal/transform/qwen.go`
 
-- [ ] **4.2** Add Qwen streaming support (TDD)
+- [x] **4.2** Add Qwen streaming support (TDD)
   - **Test**: Update streaming tests with Qwen routing
   - **Implement**: Add Qwen routing to `processStreamDelta`
     - Call `parseQwenToolCall` for `FormatQwen`
     - Handle both `tool_calls` and `function_call` formats
   - **Refactor**: Consolidate format routing logic
-  - **File**: `internal/transform/streaming.go`
+  - **File**: `internal/transform/transform.go`
 
-- [ ] **4.3** Write streaming tests for Qwen
-  - Test `tool_calls` array streaming
+- [x] **4.3** Write streaming tests for Qwen
+  - Test `tool_calls` array streaming (single tool call)
   - Test `function_call` object streaming
   - Test mixed content (text + tools)
   - Test multiple tool calls
+  - Test empty tool_calls array edge case
   - All 5 test cases pass
-  - **File**: `internal/transform/streaming_test.go`
+  - **File**: `internal/transform/transform_test.go`
 
 ---
 
@@ -351,4 +362,26 @@ For each service/function task:
 
 ---
 
-**Next Step**: `/spec:implement toolcalling` to begin TDD implementation
+## Summary
+
+### ✅ What's Working
+- Qwen models work with both vLLM (tool_calls) and Qwen-Agent (function_call) formats
+- Kimi K2 special token parsing with streaming buffer management
+- Provider detection automatically routes to correct parser
+- Comprehensive test coverage (23 new tests: 8 Qwen + 10 Kimi + 5 Qwen streaming)
+- All tests passing, no linting issues, no vulnerabilities
+- Production-ready godoc documentation
+
+### 🚧 What's Pending (Phase 5-7)
+- **Phase 5**: StreamState refactoring (consolidate 8 parameters → 1 struct)
+- **Phase 5**: TransformContext creation and propagation
+- **Phase 5**: Integration tests for full request/response cycles
+- **Phase 6**: Comprehensive error handling and logging
+- **Phase 7**: Documentation and example configurations
+
+### 💡 Implementation Note
+Current implementation prioritizes functionality over architecture. Qwen parsing is integrated directly into `processStreamDelta` using `parseQwenToolCall()`. This works correctly but bypasses the planned StreamState refactoring. Consider completing Phase 5 refactoring for better maintainability before adding more provider formats.
+
+---
+
+**Next Step**: `/spec:implement toolcalling` to continue with Phase 5 integration tasks
