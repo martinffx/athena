@@ -1,10 +1,10 @@
 // Package internal provides the command-line interface for Athena using Cobra.
-// It implements subcommands for daemon management (start, stop, status, logs)
-// and Claude Code integration.
+// It implements subcommands for daemon management (start, stop, status).
 package internal
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"time"
 
@@ -12,6 +12,7 @@ import (
 
 	"athena/internal/config"
 	"athena/internal/daemon"
+	"athena/internal/server"
 )
 
 var (
@@ -25,13 +26,12 @@ var (
 	sonnetModel string
 	haikuModel  string
 	logFormat   string
+	logLevel    string
 	logFile     string
 
 	// Command-specific flags
 	statusJSON  bool
 	stopTimeout time.Duration
-	logsLines   int
-	logsFollow  bool
 )
 
 // rootCmd represents the base command when called without any subcommands
@@ -42,15 +42,29 @@ var rootCmd = &cobra.Command{
 to OpenRouter format, enabling Claude Code to work with OpenRouter's diverse
 model selection.
 
-By default, running 'athena' will start the daemon and launch Claude Code.
-Use subcommands for daemon management (start, stop, status, logs).`,
-	// Default behavior: Start daemon and launch Claude Code
-	RunE: func(_ *cobra.Command, args []string) error {
+By default, runs the HTTP server in foreground mode.
+Use 'athena start' to run as a background daemon.`,
+	// Initialize logger before running any command
+	PersistentPreRunE: func(_ *cobra.Command, _ []string) error {
+		// Try to load config, but don't fail if API key is missing
+		// (some commands like stop/status don't need it)
+		cfg, err := config.New(configFile)
+		if err != nil {
+			return fmt.Errorf("failed to load config: %w", err)
+		}
+		applyFlagOverrides(cfg)
+		initLogger(cfg)
+		return nil
+	},
+	// Default behavior: Run server in foreground
+	RunE: func(_ *cobra.Command, _ []string) error {
 		cfg, err := loadAndValidateConfig()
 		if err != nil {
 			return err
 		}
-		return daemon.LaunchWithClaude(cfg, args)
+
+		srv := server.New(cfg)
+		return srv.Start()
 	},
 }
 
@@ -110,49 +124,6 @@ var statusCmd = &cobra.Command{
 	},
 }
 
-// logsCmd shows daemon logs
-var logsCmd = &cobra.Command{
-	Use:   "logs",
-	Short: "Show Athena daemon logs",
-	Long: `Display logs from the Athena daemon.
-
-By default, tails the log file in real-time (like tail -f).
-Use --follow=false to show last N lines and exit.`,
-	RunE: func(_ *cobra.Command, _ []string) error {
-		logPath, err := daemon.GetLogFilePath()
-		if err != nil {
-			return fmt.Errorf("failed to get log file path: %w", err)
-		}
-
-		if _, err := os.Stat(logPath); os.IsNotExist(err) {
-			return fmt.Errorf("log file not found: %s (daemon may not have been started)", logPath)
-		}
-
-		if logsFollow {
-			return daemon.FollowLogs(logPath)
-		}
-
-		return daemon.ShowLastLines(logPath, logsLines)
-	},
-}
-
-// codeCmd explicitly starts daemon and launches Claude Code
-var codeCmd = &cobra.Command{
-	Use:   "code [args...]",
-	Short: "Start daemon and launch Claude Code",
-	Long: `Start the Athena daemon (if not running) and launch Claude Code with
-the correct environment variables configured automatically.
-
-Any additional arguments are passed through to the claude command.`,
-	RunE: func(_ *cobra.Command, args []string) error {
-		cfg, err := loadAndValidateConfig()
-		if err != nil {
-			return err
-		}
-		return daemon.LaunchWithClaude(cfg, args)
-	},
-}
-
 func init() {
 	// Persistent flags available to all commands
 	rootCmd.PersistentFlags().StringVar(&configFile, "config", "", "Path to config file (YAML)")
@@ -164,20 +135,17 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&sonnetModel, "model-sonnet", "", "Model to map claude-sonnet requests to")
 	rootCmd.PersistentFlags().StringVar(&haikuModel, "model-haiku", "", "Model to map claude-haiku requests to")
 	rootCmd.PersistentFlags().StringVar(&logFormat, "log-format", "", "Log format: text or json")
+	rootCmd.PersistentFlags().StringVar(&logLevel, "log-level", "", "Log level: debug, info, warn, error")
 	rootCmd.PersistentFlags().StringVar(&logFile, "log-file", "", "Log file path (default: stdout)")
 
 	// Command-specific flags
 	statusCmd.Flags().BoolVar(&statusJSON, "json", false, "Output status as JSON")
 	stopCmd.Flags().DurationVar(&stopTimeout, "timeout", 30*time.Second, "Graceful shutdown timeout")
-	logsCmd.Flags().IntVarP(&logsLines, "lines", "n", 50, "Number of lines to show (when not following)")
-	logsCmd.Flags().BoolVarP(&logsFollow, "follow", "f", true, "Follow log output (tail -f behavior)")
 
 	// Add subcommands
 	rootCmd.AddCommand(startCmd)
 	rootCmd.AddCommand(stopCmd)
 	rootCmd.AddCommand(statusCmd)
-	rootCmd.AddCommand(logsCmd)
-	rootCmd.AddCommand(codeCmd)
 }
 
 // Execute adds all child commands to the root command and sets flags appropriately.
@@ -228,7 +196,41 @@ func applyFlagOverrides(cfg *config.Config) {
 	if logFormat != "" {
 		cfg.LogFormat = logFormat
 	}
+	if logLevel != "" {
+		cfg.LogLevel = logLevel
+	}
 	if logFile != "" {
 		cfg.LogFile = logFile
 	}
+}
+
+// initLogger initializes the global slog logger with the configured level
+func initLogger(cfg *config.Config) {
+	var level slog.Level
+	switch cfg.LogLevel {
+	case "debug":
+		level = slog.LevelDebug
+	case "info":
+		level = slog.LevelInfo
+	case "warn":
+		level = slog.LevelWarn
+	case "error":
+		level = slog.LevelError
+	default:
+		level = slog.LevelInfo
+	}
+
+	opts := &slog.HandlerOptions{
+		Level: level,
+	}
+
+	var handler slog.Handler
+	if cfg.LogFormat == "json" {
+		handler = slog.NewJSONHandler(os.Stdout, opts)
+	} else {
+		handler = slog.NewTextHandler(os.Stdout, opts)
+	}
+
+	logger := slog.New(handler)
+	slog.SetDefault(logger)
 }

@@ -62,7 +62,7 @@ func StartDaemon(cfg *config.Config) error {
 		return fmt.Errorf("failed to get executable path: %w", err)
 	}
 
-	// Build command arguments
+	// Build command arguments (default command runs server)
 	args := []string{}
 	if cfg.Port != "" {
 		args = append(args, "--port", cfg.Port)

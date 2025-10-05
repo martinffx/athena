@@ -96,11 +96,13 @@ As a Claude Code user, I want to use the proxy to connect to OpenRouter with dif
 5. Return to Client
 
 ### Configuration
-- Priority: CLI flags > config files > env vars > defaults
-- Search paths:
-  - `~/.config/athena/athena.{yml,json}`
-  - `./athena.{yml,json}`
-  - `./.env`
+- Priority (highest to lowest): CLI flags > env vars > local config > global config > defaults
+- Config file discovery:
+  - Global: `~/.config/athena/athena.yml`
+  - Local: `./athena.yml` (overrides global)
+  - Explicit: `--config <path>` (bypasses discovery)
+- Environment variables: `ATHENA_*` prefixed
+- Runtime state directory: `~/.athena/` (PID file, logs)
 
 ### Performance Targets
 - Transformation Latency: <1ms
