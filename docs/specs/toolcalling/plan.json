@@ -1,0 +1,516 @@
+{
+  "phases": {
+    "foundation": {
+      "name": "Foundation - Type System",
+      "description": "Add core type definitions for format detection and transformation context",
+      "dependencies": [],
+      "tasks": ["add_modelformat_enum", "add_transformcontext_struct", "add_streamstate_struct", "add_formatstreamcontext_struct"],
+      "parallel_execution": true
+    },
+    "provider_detection": {
+      "name": "Provider Detection",
+      "description": "Implement model format detection logic to identify OpenRouter response format",
+      "dependencies": ["foundation"],
+      "tasks": ["create_providers_file", "implement_detectmodelformat", "test_detectmodelformat"]
+    },
+    "kimi_parsing": {
+      "name": "Kimi K2 Format Parsing",
+      "description": "Handle Kimi K2 special token format with regex parsing and streaming buffer",
+      "dependencies": ["foundation", "provider_detection"],
+      "tasks": ["implement_parsekimitoolcalls", "test_parsekimitoolcalls", "create_streaming_file", "implement_handlekimistreaming", "test_kimi_streaming"]
+    },
+    "qwen_parsing": {
+      "name": "Qwen Hermes Format Parsing",
+      "description": "Handle Qwen dual format acceptance (tool_calls array and function_call object)",
+      "dependencies": ["foundation"],
+      "tasks": ["implement_parseqwentoolcall", "test_parseqwentoolcall", "add_qwen_streaming", "test_qwen_streaming"],
+      "parallel_with": ["kimi_parsing"]
+    },
+    "integration": {
+      "name": "Integration with Existing Transform Pipeline",
+      "description": "Modify existing transformation functions to use new types and route to format-specific parsers",
+      "dependencies": ["provider_detection", "kimi_parsing", "qwen_parsing"],
+      "tasks": ["modify_anthropictoopeanai", "modify_transformmessage", "modify_openaitoanthropic", "modify_handlestreaming", "modify_processstreamdelta", "write_integration_tests"]
+    },
+    "error_handling": {
+      "name": "Error Handling and Logging",
+      "description": "Add comprehensive error handling, streaming error events, and format detection logging",
+      "dependencies": ["integration"],
+      "tasks": ["implement_sendstreamerror", "add_transformation_error_handling", "add_server_error_handling", "add_format_logging", "write_error_tests"]
+    },
+    "documentation": {
+      "name": "Documentation Updates",
+      "description": "Update project documentation with tool calling features and usage examples",
+      "dependencies": ["error_handling"],
+      "tasks": ["update_claude_md", "create_example_configs"]
+    }
+  },
+  "tasks": {
+    "add_modelformat_enum": {
+      "phase": "foundation",
+      "order": 1,
+      "title": "Add ModelFormat enum to types.go",
+      "description": "Define ModelFormat enum with FormatDeepSeek, FormatQwen, FormatKimi, FormatStandard constants and String() method",
+      "files": ["internal/transform/types.go"],
+      "complexity": "small",
+      "tdd_steps": ["define_type", "add_string_method", "validate_usage"],
+      "acceptance_criteria": [
+        "ModelFormat type defined with iota constants",
+        "String() method returns readable format names",
+        "All four format types defined"
+      ]
+    },
+    "add_transformcontext_struct": {
+      "phase": "foundation",
+      "order": 2,
+      "title": "Add TransformContext struct to types.go",
+      "description": "Define TransformContext with Format and Config fields for passing context through transformation pipeline",
+      "files": ["internal/transform/types.go"],
+      "complexity": "small",
+      "tdd_steps": ["define_struct", "document_fields", "validate_usage"],
+      "acceptance_criteria": [
+        "TransformContext struct defined with Format ModelFormat and Config *config.Config fields",
+        "Fields properly documented"
+      ]
+    },
+    "add_streamstate_struct": {
+      "phase": "foundation",
+      "order": 3,
+      "title": "Add StreamState struct to types.go",
+      "description": "Define StreamState to consolidate streaming state (ContentBlockIndex, HasStartedTextBlock, IsToolUse, CurrentToolCallID, ToolCallJSONMap, FormatContext)",
+      "files": ["internal/transform/types.go"],
+      "complexity": "small",
+      "tdd_steps": ["define_struct", "document_fields", "validate_usage"],
+      "acceptance_criteria": [
+        "StreamState struct defined with all 6 required fields",
+        "Replaces 8+ individual parameters in processStreamDelta",
+        "Fields properly documented"
+      ]
+    },
+    "add_formatstreamcontext_struct": {
+      "phase": "foundation",
+      "order": 4,
+      "title": "Add FormatStreamContext struct to types.go",
+      "description": "Define FormatStreamContext for format-specific streaming state (primarily Kimi buffering)",
+      "files": ["internal/transform/types.go"],
+      "complexity": "small",
+      "tdd_steps": ["define_struct", "document_fields", "validate_usage"],
+      "acceptance_criteria": [
+        "FormatStreamContext struct defined with Format, KimiBuffer, KimiBufferLimit, KimiInToolSection fields",
+        "Fields properly documented"
+      ]
+    },
+    "create_providers_file": {
+      "phase": "provider_detection",
+      "order": 1,
+      "title": "Create internal/transform/providers.go file",
+      "description": "Create new file for provider-specific format detection and parsing logic",
+      "files": ["internal/transform/providers.go"],
+      "complexity": "small",
+      "tdd_steps": ["create_file", "add_package_declaration", "add_imports"],
+      "acceptance_criteria": [
+        "File created with package transform declaration",
+        "Necessary imports added (strings, regexp, fmt)"
+      ]
+    },
+    "implement_detectmodelformat": {
+      "phase": "provider_detection",
+      "order": 2,
+      "title": "Implement DetectModelFormat function",
+      "description": "Implement format detection logic with OpenRouter ID parsing, keyword matching, case insensitivity, and precedence order Kimi > Qwen > DeepSeek > Standard",
+      "files": ["internal/transform/providers.go"],
+      "complexity": "medium",
+      "tdd_steps": ["write_tests", "implement_function", "refactor"],
+      "dependencies": ["add_modelformat_enum"],
+      "acceptance_criteria": [
+        "Function signature: func DetectModelFormat(modelID string) ModelFormat",
+        "Handles OpenRouter format (provider/model)",
+        "Case-insensitive keyword matching",
+        "Correct precedence order enforced",
+        "Fallback to FormatStandard for unknown models"
+      ]
+    },
+    "test_detectmodelformat": {
+      "phase": "provider_detection",
+      "order": 3,
+      "title": "Write unit tests for DetectModelFormat",
+      "description": "Write 12 test cases covering all format patterns, precedence rules, case insensitivity, and fallback behavior",
+      "files": ["internal/transform/providers_test.go"],
+      "complexity": "medium",
+      "tdd_steps": ["write_test_cases", "verify_coverage", "refactor"],
+      "acceptance_criteria": [
+        "Test moonshot/kimi-k2 → FormatKimi",
+        "Test kimi-k2-instruct → FormatKimi",
+        "Test qwen/qwen3-coder → FormatQwen",
+        "Test deepseek-chat → FormatDeepSeek",
+        "Test case insensitivity (KIMI-K2 → FormatKimi)",
+        "Test precedence (qwen-deepseek-mix → FormatQwen)",
+        "Test fallback (unknown-model → FormatStandard)",
+        "All 12 test cases pass"
+      ]
+    },
+    "implement_parsekimitoolcalls": {
+      "phase": "kimi_parsing",
+      "order": 1,
+      "title": "Implement parseKimiToolCalls function",
+      "description": "Implement regex-based parser for Kimi K2 special token format (<|tool_calls_section_begin|>...<|tool_calls_section_end|>)",
+      "files": ["internal/transform/providers.go"],
+      "complexity": "large",
+      "tdd_steps": ["write_tests", "implement_function", "refactor"],
+      "acceptance_criteria": [
+        "Function signature: func parseKimiToolCalls(content string) ([]ToolCall, error)",
+        "Extracts tool_calls_section with regex",
+        "Extracts individual tool_call blocks",
+        "Parses ID (functions.name:idx) and JSON arguments",
+        "Returns error for malformed tokens",
+        "Handles single and multiple tool calls"
+      ]
+    },
+    "test_parsekimitoolcalls": {
+      "phase": "kimi_parsing",
+      "order": 2,
+      "title": "Write unit tests for parseKimiToolCalls",
+      "description": "Write 10 test cases for single/multiple tool calls, nested JSON, and malformed token scenarios",
+      "files": ["internal/transform/providers_test.go"],
+      "complexity": "medium",
+      "tdd_steps": ["write_test_cases", "verify_coverage", "refactor"],
+      "acceptance_criteria": [
+        "Test single tool call parsing",
+        "Test multiple tool calls",
+        "Test nested JSON arguments",
+        "Test malformed special tokens (missing begin/end)",
+        "Test no tool calls present",
+        "Test invalid ID format",
+        "All 10 test cases pass"
+      ]
+    },
+    "create_streaming_file": {
+      "phase": "kimi_parsing",
+      "order": 3,
+      "title": "Create internal/transform/streaming.go file",
+      "description": "Create new file for streaming-specific logic including Kimi buffering",
+      "files": ["internal/transform/streaming.go"],
+      "complexity": "small",
+      "tdd_steps": ["create_file", "add_package_declaration", "add_imports"],
+      "acceptance_criteria": [
+        "File created with package transform declaration",
+        "Necessary imports added (net/http, strings, fmt, encoding/json)"
+      ]
+    },
+    "implement_handlekimistreaming": {
+      "phase": "kimi_parsing",
+      "order": 4,
+      "title": "Implement handleKimiStreaming function",
+      "description": "Implement Kimi streaming with buffering across SSE chunks, 10KB limit, and Anthropic event emission",
+      "files": ["internal/transform/streaming.go"],
+      "complexity": "large",
+      "tdd_steps": ["write_tests", "implement_function", "refactor"],
+      "dependencies": ["add_streamstate_struct", "implement_parsekimitoolcalls"],
+      "acceptance_criteria": [
+        "Function signature: func handleKimiStreaming(w http.ResponseWriter, flusher http.Flusher, state *StreamState, chunk string) error",
+        "Appends chunk to buffer",
+        "Checks 10KB buffer limit",
+        "Detects <|tool_calls_section_end|> completion",
+        "Parses complete section and emits Anthropic SSE events",
+        "Clears buffer after emission",
+        "Returns error if buffer exceeded"
+      ]
+    },
+    "test_kimi_streaming": {
+      "phase": "kimi_parsing",
+      "order": 5,
+      "title": "Write streaming tests for Kimi",
+      "description": "Write 5 test cases for Kimi streaming scenarios including complete, split, and buffer exceeded cases",
+      "files": ["internal/transform/streaming_test.go"],
+      "complexity": "medium",
+      "tdd_steps": ["write_test_cases", "verify_coverage", "refactor"],
+      "acceptance_criteria": [
+        "Test complete section in one chunk",
+        "Test section split across 2 chunks",
+        "Test section split across 5 chunks",
+        "Test buffer limit exceeded (>10KB)",
+        "Test missing end token",
+        "All 5 test cases pass"
+      ]
+    },
+    "implement_parseqwentoolcall": {
+      "phase": "qwen_parsing",
+      "order": 1,
+      "title": "Implement parseQwenToolCall function",
+      "description": "Implement dual format parser accepting both tool_calls array (vLLM) and function_call object (Qwen-Agent)",
+      "files": ["internal/transform/providers.go"],
+      "complexity": "medium",
+      "tdd_steps": ["write_tests", "implement_function", "refactor"],
+      "acceptance_criteria": [
+        "Function signature: func parseQwenToolCall(delta map[string]interface{}) []ToolCall",
+        "Accepts tool_calls array format",
+        "Accepts function_call object format",
+        "Generates synthetic ID for function_call format",
+        "Returns unified ToolCall array"
+      ]
+    },
+    "test_parseqwentoolcall": {
+      "phase": "qwen_parsing",
+      "order": 2,
+      "title": "Write unit tests for parseQwenToolCall",
+      "description": "Write 8 test cases for both formats, mixed scenarios, and edge cases",
+      "files": ["internal/transform/providers_test.go"],
+      "complexity": "medium",
+      "tdd_steps": ["write_test_cases", "verify_coverage", "refactor"],
+      "acceptance_criteria": [
+        "Test tool_calls array format",
+        "Test function_call object format",
+        "Test synthetic ID generation",
+        "Test empty delta",
+        "Test multiple tool calls in array",
+        "Test missing fields",
+        "All 8 test cases pass"
+      ]
+    },
+    "add_qwen_streaming": {
+      "phase": "qwen_parsing",
+      "order": 3,
+      "title": "Add Qwen streaming support",
+      "description": "Handle Qwen streaming deltas in processStreamDelta routing logic",
+      "files": ["internal/transform/streaming.go"],
+      "complexity": "medium",
+      "tdd_steps": ["write_tests", "implement_routing", "refactor"],
+      "dependencies": ["implement_parseqwentoolcall"],
+      "acceptance_criteria": [
+        "Qwen format routing added to processStreamDelta",
+        "Calls parseQwenToolCall for Qwen deltas",
+        "Properly handles both tool_calls and function_call formats"
+      ]
+    },
+    "test_qwen_streaming": {
+      "phase": "qwen_parsing",
+      "order": 4,
+      "title": "Write streaming tests for Qwen",
+      "description": "Write 5 test cases for Qwen streaming with both format variants",
+      "files": ["internal/transform/streaming_test.go"],
+      "complexity": "medium",
+      "tdd_steps": ["write_test_cases", "verify_coverage", "refactor"],
+      "acceptance_criteria": [
+        "Test tool_calls array streaming",
+        "Test function_call object streaming",
+        "Test mixed content (text + tools)",
+        "Test multiple tool calls",
+        "All 5 test cases pass"
+      ]
+    },
+    "modify_anthropictoopeanai": {
+      "phase": "integration",
+      "order": 1,
+      "title": "Modify AnthropicToOpenAI to create TransformContext",
+      "description": "Add TransformContext creation and format detection at the start of AnthropicToOpenAI function",
+      "files": ["internal/transform/transform.go"],
+      "complexity": "medium",
+      "tdd_steps": ["write_test_changes", "implement_changes", "refactor"],
+      "dependencies": ["add_transformcontext_struct", "implement_detectmodelformat"],
+      "acceptance_criteria": [
+        "Creates TransformContext with detected format",
+        "Calls DetectModelFormat(mappedModel)",
+        "Passes context to transformMessage",
+        "Existing functionality preserved",
+        "Tests pass"
+      ]
+    },
+    "modify_transformmessage": {
+      "phase": "integration",
+      "order": 2,
+      "title": "Modify transformMessage to add ctx parameter",
+      "description": "Add ctx *TransformContext parameter to transformMessage (currently unused, maintains consistency)",
+      "files": ["internal/transform/transform.go"],
+      "complexity": "small",
+      "tdd_steps": ["update_signature", "update_callers", "verify_tests"],
+      "dependencies": ["add_transformcontext_struct"],
+      "acceptance_criteria": [
+        "Function signature updated to include ctx parameter",
+        "All callers updated",
+        "Tests pass"
+      ]
+    },
+    "modify_openaitoanthropic": {
+      "phase": "integration",
+      "order": 3,
+      "title": "Modify OpenAIToAnthropic to add format parameter and call parsers",
+      "description": "Add format ModelFormat parameter and route to format-specific parsers before standard transformation",
+      "files": ["internal/transform/transform.go"],
+      "complexity": "large",
+      "tdd_steps": ["write_test_changes", "implement_routing", "refactor"],
+      "dependencies": ["implement_parsekimitoolcalls", "implement_parseqwentoolcall"],
+      "acceptance_criteria": [
+        "Function signature includes format ModelFormat parameter",
+        "Switch on format type",
+        "Calls parseKimiToolCalls for FormatKimi",
+        "Calls parseQwenToolCall for FormatQwen",
+        "Existing FormatStandard/FormatDeepSeek logic unchanged",
+        "Tests pass for all formats"
+      ]
+    },
+    "modify_handlestreaming": {
+      "phase": "integration",
+      "order": 4,
+      "title": "Modify HandleStreaming to create StreamState",
+      "description": "Create StreamState with FormatStreamContext at the start of streaming handler",
+      "files": ["internal/transform/streaming.go"],
+      "complexity": "medium",
+      "tdd_steps": ["write_test_changes", "implement_changes", "refactor"],
+      "dependencies": ["add_streamstate_struct", "add_formatstreamcontext_struct"],
+      "acceptance_criteria": [
+        "Creates StreamState with initialized FormatStreamContext",
+        "Sets KimiBufferLimit to 10KB",
+        "Passes state to processStreamDelta",
+        "Tests pass"
+      ]
+    },
+    "modify_processstreamdelta": {
+      "phase": "integration",
+      "order": 5,
+      "title": "Modify processStreamDelta to use StreamState and route by format",
+      "description": "Replace 8+ parameters with StreamState, add format routing to handleKimiStreaming and parseQwenToolCall",
+      "files": ["internal/transform/streaming.go"],
+      "complexity": "large",
+      "tdd_steps": ["write_test_changes", "implement_routing", "refactor"],
+      "dependencies": ["add_streamstate_struct", "implement_handlekimistreaming", "add_qwen_streaming"],
+      "acceptance_criteria": [
+        "Function signature: func processStreamDelta(w http.ResponseWriter, flusher http.Flusher, delta map[string]interface{}, state *StreamState) error",
+        "Parameter count reduced from 8+ to 4",
+        "Switch on state.FormatContext.Format",
+        "Routes FormatKimi to handleKimiStreaming",
+        "Routes FormatQwen to parseQwenToolCall",
+        "Existing FormatStandard logic preserved",
+        "All streaming tests pass"
+      ]
+    },
+    "write_integration_tests": {
+      "phase": "integration",
+      "order": 6,
+      "title": "Write integration tests for full request/response cycles",
+      "description": "Write 3 integration tests (one per format: Kimi, Qwen, DeepSeek) verifying complete transformation pipeline",
+      "files": ["internal/transform/integration_test.go"],
+      "complexity": "large",
+      "tdd_steps": ["write_test_cases", "verify_end_to_end", "refactor"],
+      "acceptance_criteria": [
+        "Test complete Kimi flow: Anthropic request → OpenRouter → Kimi response → Anthropic format",
+        "Test complete Qwen flow with both format variants",
+        "Test complete DeepSeek/Standard flow (baseline)",
+        "Verify tool_use blocks correctly formatted",
+        "Verify multi-turn conversations with tool_result",
+        "All 3 integration tests pass"
+      ]
+    },
+    "implement_sendstreamerror": {
+      "phase": "error_handling",
+      "order": 1,
+      "title": "Implement sendStreamError helper function",
+      "description": "Implement helper to send Anthropic-format error SSE event and gracefully terminate stream",
+      "files": ["internal/transform/streaming.go"],
+      "complexity": "small",
+      "tdd_steps": ["write_tests", "implement_function", "refactor"],
+      "acceptance_criteria": [
+        "Function signature: func sendStreamError(w http.ResponseWriter, flusher http.Flusher, errorType string, message string)",
+        "Sends event: error with Anthropic error format",
+        "Sends event: message_stop to terminate stream",
+        "Flushes after each event"
+      ]
+    },
+    "add_transformation_error_handling": {
+      "phase": "error_handling",
+      "order": 2,
+      "title": "Add error handling to transformation functions",
+      "description": "Add proper error handling to all transformation functions per error matrix (400, 500, 502 status codes)",
+      "files": ["internal/transform/transform.go", "internal/transform/providers.go", "internal/transform/streaming.go"],
+      "complexity": "medium",
+      "tdd_steps": ["identify_error_points", "implement_handlers", "verify_tests"],
+      "acceptance_criteria": [
+        "Malformed tool definitions return 400 errors",
+        "Regex compilation failures return 500 errors",
+        "Malformed OpenRouter responses return 502 errors",
+        "Buffer exceeded returns 502 error",
+        "All error paths tested"
+      ]
+    },
+    "add_server_error_handling": {
+      "phase": "error_handling",
+      "order": 3,
+      "title": "Add error handling to server.go after OpenRouter response",
+      "description": "Capture transformation errors in handleMessages and map to appropriate HTTP status codes",
+      "files": ["internal/server/server.go"],
+      "complexity": "medium",
+      "tdd_steps": ["identify_error_points", "implement_handlers", "verify_tests"],
+      "acceptance_criteria": [
+        "Captures errors from OpenAIToAnthropic()",
+        "Captures errors from HandleStreaming()",
+        "Maps error types to correct status codes (400, 500, 502)",
+        "Logs errors at appropriate levels",
+        "Returns sanitized error messages to client"
+      ]
+    },
+    "add_format_logging": {
+      "phase": "error_handling",
+      "order": 4,
+      "title": "Add format detection logging to server.go",
+      "description": "Log detected format alongside model mapping for debugging and monitoring",
+      "files": ["internal/server/server.go"],
+      "complexity": "small",
+      "tdd_steps": ["add_logging", "verify_output", "refactor"],
+      "acceptance_criteria": [
+        "Logs detected format with model mapping",
+        "Example: 'provider detected: kimi, model: moonshot/kimi-k2'",
+        "Uses appropriate log level (info or debug)",
+        "Includes request context"
+      ]
+    },
+    "write_error_tests": {
+      "phase": "error_handling",
+      "order": 5,
+      "title": "Write error scenario tests",
+      "description": "Write comprehensive error tests covering all error matrix scenarios",
+      "files": ["internal/transform/error_test.go"],
+      "complexity": "medium",
+      "tdd_steps": ["write_test_cases", "verify_coverage", "refactor"],
+      "acceptance_criteria": [
+        "Test malformed tool definition (400)",
+        "Test unknown tool_call_id (400)",
+        "Test regex compilation error (500)",
+        "Test malformed OpenRouter response (502)",
+        "Test buffer exceeded (502)",
+        "Test streaming error event format",
+        "All error tests pass"
+      ]
+    },
+    "update_claude_md": {
+      "phase": "documentation",
+      "order": 1,
+      "title": "Update CLAUDE.md with tool calling features",
+      "description": "Document new tool calling capabilities, format support, and architecture changes",
+      "files": ["CLAUDE.md"],
+      "complexity": "small",
+      "tdd_steps": ["draft_updates", "review_accuracy", "finalize"],
+      "acceptance_criteria": [
+        "Documents three supported formats (DeepSeek, Qwen, Kimi)",
+        "Explains format detection strategy",
+        "Updates architecture overview with new components",
+        "Adds tool calling to feature list",
+        "Documentation is clear and accurate"
+      ]
+    },
+    "create_example_configs": {
+      "phase": "documentation",
+      "order": 2,
+      "title": "Create example configurations for all three formats",
+      "description": "Provide example athena.yml configurations for DeepSeek, Qwen, and Kimi models",
+      "files": ["examples/deepseek-tools.yml", "examples/qwen-tools.yml", "examples/kimi-tools.yml"],
+      "complexity": "small",
+      "tdd_steps": ["create_examples", "test_examples", "finalize"],
+      "acceptance_criteria": [
+        "Example config for DeepSeek with tool calling",
+        "Example config for Qwen3-Coder with tool calling",
+        "Example config for Kimi K2 with tool calling",
+        "Each example includes API key placeholder and model mapping",
+        "Examples are tested and working"
+      ]
+    }
+  }
+}

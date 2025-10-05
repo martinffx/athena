@@ -1,0 +1,49 @@
+{
+  "product_vision": "Athena is a Go-based HTTP proxy server that translates Anthropic API requests to OpenRouter format, enabling Claude Code users to access 100+ diverse AI models with cost savings and local development options while maintaining full compatibility with Claude Code workflows",
+  "existing_features": [
+    "Bidirectional API translation between Anthropic Messages API and OpenRouter Chat Completions format",
+    "Real-time streaming support with Server-Sent Events (SSE) and proper buffering",
+    "Intelligent model mapping (claude-3-opus/sonnet/haiku to configurable OpenRouter models)",
+    "Tool calling with JSON schema validation and cleaning (removes unsupported 'format: uri' properties)",
+    "Tool response validation ensuring tool calls have matching tool responses",
+    "Multi-source configuration system (CLI flags, config files, env vars, defaults)",
+    "Provider routing configuration for flexible model selection"
+  ],
+  "architecture": {
+    "request_pipeline": "HTTP Handler (/v1/messages) → Message Transformation (transformAnthropicToOpenAI) → Upstream Request (makeOpenRouterRequest) → Response Processing (streaming or non-streaming)",
+    "transformation_flow": "System message extraction → Content block normalization (text, tool_use, tool_result) → Tool schema cleaning → Model mapping resolution → Request serialization",
+    "streaming_architecture": "SSE line-by-line processing with buffering → Event mapping (OpenAI delta to Anthropic content_block_delta) → State management for content block indices and tool call tracking",
+    "data_structures": "AnthropicRequest/Message → OpenAIRequest/OpenAIMessage → ContentBlock handles text, tool_use, and tool_result types",
+    "package_structure": "cmd/athena (main entry), internal/server (HTTP handlers), internal/transform (message transformation), internal/config (configuration management)"
+  },
+  "relevant_code": {
+    "transformation_functions": [
+      "AnthropicToOpenAI() - Main transformation from Anthropic to OpenAI format (transform.go:23-110)",
+      "transformMessage() - Converts individual messages handling text and tool content (transform.go:113-197)",
+      "validateToolCalls() - Ensures tool calls have matching responses (transform.go:200-280)",
+      "OpenAIToAnthropic() - Converts OpenAI response back to Anthropic format (transform.go:355-417)"
+    ],
+    "streaming_functions": [
+      "HandleStreaming() - Main streaming response handler with SSE processing (transform.go:442-539)",
+      "processStreamDelta() - Processes individual streaming deltas from OpenRouter (transform.go:542-631)",
+      "sendSSE() - Sends Server-Sent Events (transform.go:634-638)"
+    ],
+    "tool_handling": [
+      "removeUriFormat() - Removes unsupported 'format: uri' from JSON schema (transform.go:320-329)",
+      "Tool call transformation in transformMessage() handles tool_use blocks (transform.go:140-154)",
+      "Tool result transformation handles tool_result content blocks (transform.go:173-183)",
+      "Streaming tool call tracking with toolCallJSONMap and state management (transform.go:483-596)"
+    ],
+    "data_types": [
+      "AnthropicRequest with Tools []Tool field (types.go:17-25)",
+      "Tool with InputSchema json.RawMessage (types.go:34-38)",
+      "OpenAIMessage with ToolCalls []ToolCall and ToolCallID (types.go:51-56)",
+      "ToolCall struct with ID, Type, Function fields (types.go:59-66)",
+      "ContentBlock with tool-related fields: ID, Name, Input, ToolUseID (types.go:79-87)"
+    ],
+    "http_handler": [
+      "Server.handleMessages() - Main request handler in server.go (server.go:77-199)",
+      "Request flow: Parse → Transform → Forward → Handle response (streaming or non-streaming)"
+    ]
+  }
+}

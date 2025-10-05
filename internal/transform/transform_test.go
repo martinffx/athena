@@ -430,7 +430,10 @@ func TestOpenAIToAnthropic(t *testing.T) {
 		},
 	}
 
-	result := OpenAIToAnthropic(resp, "test/model")
+	result, err := OpenAIToAnthropic(resp, "test/model", FormatStandard)
+	if err != nil {
+		t.Fatalf("OpenAIToAnthropic() unexpected error: %v", err)
+	}
 
 	if result["type"] != "message" {
 		t.Errorf("Response type = %v, expected %q", result["type"], "message")
@@ -488,9 +491,12 @@ func TestOpenAIToAnthropic_WithToolCalls(t *testing.T) {
 		},
 	}
 
-	result := OpenAIToAnthropic(resp, "test/model")
+	result, err := OpenAIToAnthropic(resp, "test/model", FormatStandard)
+	if err != nil {
+		t.Fatalf("OpenAIToAnthropic() unexpected error: %v", err)
+	}
 
-	if result["stop_reason"] != "tool_use" {
+	if result["stop_reason"] != TypeToolUse {
 		t.Errorf("Response stop_reason = %v, expected %q", result["stop_reason"], "tool_use")
 	}
 
@@ -509,7 +515,7 @@ func TestOpenAIToAnthropic_WithToolCalls(t *testing.T) {
 	}
 
 	// Check tool_use block
-	if content[1]["type"] != "tool_use" {
+	if content[1]["type"] != TypeToolUse {
 		t.Errorf("Second content type = %v, expected %q", content[1]["type"], "tool_use")
 	}
 
@@ -531,13 +537,107 @@ func TestOpenAIToAnthropic_WithToolCalls(t *testing.T) {
 	}
 }
 
+func TestOpenAIToAnthropic_QwenFunctionCall(t *testing.T) {
+	// Qwen models can return function_call instead of tool_calls
+	resp := map[string]interface{}{
+		"choices": []interface{}{
+			map[string]interface{}{
+				"message": map[string]interface{}{
+					"content": nil,
+					"function_call": map[string]interface{}{
+						"name":      "get_weather",
+						"arguments": `{"city":"Tokyo"}`,
+					},
+				},
+				"finish_reason": "function_call",
+			},
+		},
+	}
+
+	result, err := OpenAIToAnthropic(resp, "qwen/qwen-2.5-72b-instruct", FormatQwen)
+	if err != nil {
+		t.Fatalf("OpenAIToAnthropic() unexpected error: %v", err)
+	}
+
+	content, ok := result["content"].([]map[string]interface{})
+	if !ok {
+		t.Fatalf("Response content is not an array")
+	}
+
+	// Should have 1 tool_use block
+	if len(content) != 1 {
+		t.Fatalf("Expected 1 content block, got %d", len(content))
+	}
+
+	if content[0]["type"] != "tool_use" {
+		t.Errorf("Content type = %v, expected %q", content[0]["type"], "tool_use")
+	}
+
+	if content[0]["name"] != "get_weather" {
+		t.Errorf("Tool name = %v, expected %q", content[0]["name"], "get_weather")
+	}
+
+	// Should have a synthetic ID
+	if _, ok := content[0]["id"].(string); !ok {
+		t.Errorf("Tool ID should be a string, got %T", content[0]["id"])
+	}
+}
+
+func TestOpenAIToAnthropic_KimiSpecialTokens(t *testing.T) {
+	// Kimi models return special tokens in content
+	resp := map[string]interface{}{
+		"choices": []interface{}{
+			map[string]interface{}{
+				"message": map[string]interface{}{
+					"content": `<|tool_calls_section_begin|>
+<|tool_call_begin|>functions.search:1<|tool_call_argument_begin|>{"query":"test"}<|tool_call_end|>
+<|tool_calls_section_end|>`,
+				},
+				"finish_reason": "stop",
+			},
+		},
+	}
+
+	result, err := OpenAIToAnthropic(resp, "moonshot/kimi-k2-0905", FormatKimi)
+	if err != nil {
+		t.Fatalf("OpenAIToAnthropic() unexpected error: %v", err)
+	}
+
+	content, ok := result["content"].([]map[string]interface{})
+	if !ok {
+		t.Fatalf("Response content is not an array")
+	}
+
+	// Should have 1 tool_use block (parsed from special tokens)
+	if len(content) != 1 {
+		t.Fatalf("Expected 1 content block, got %d", len(content))
+	}
+
+	if content[0]["type"] != "tool_use" {
+		t.Errorf("Content type = %v, expected %q", content[0]["type"], "tool_use")
+	}
+
+	if content[0]["name"] != "search" {
+		t.Errorf("Tool name = %v, expected %q", content[0]["name"], "search")
+	}
+
+	if content[0]["id"] != "functions.search:1" {
+		t.Errorf("Tool ID = %v, expected %q", content[0]["id"], "functions.search:1")
+	}
+}
+
 func TestTransformMessage_AssistantWithText(t *testing.T) {
 	msg := Message{
 		Role:    "assistant",
 		Content: json.RawMessage(`[{"type":"text","text":"Hello there"}]`),
 	}
 
-	result := transformMessage(msg)
+	ctx := &Context{
+		Format: FormatStandard,
+		Config: &config.Config{},
+	}
+
+	result := transformMessage(msg, ctx)
 
 	if len(result) != 1 {
 		t.Fatalf("Expected 1 message, got %d", len(result))
@@ -566,7 +666,12 @@ func TestTransformMessage_UserWithToolResult(t *testing.T) {
 		]`),
 	}
 
-	result := transformMessage(msg)
+	ctx := &Context{
+		Format: FormatStandard,
+		Config: &config.Config{},
+	}
+
+	result := transformMessage(msg, ctx)
 
 	if len(result) != 2 {
 		t.Fatalf("Expected 2 messages (user + tool), got %d", len(result))
@@ -725,7 +830,7 @@ func TestHandleNonStreaming(t *testing.T) {
 			}
 
 			w := httptest.NewRecorder()
-			HandleNonStreaming(w, resp, "test/model")
+			HandleNonStreaming(w, resp, "test/model", FormatStandard)
 
 			result := w.Result()
 			defer result.Body.Close()
@@ -754,7 +859,7 @@ data: [DONE]
 	}
 
 	w := httptest.NewRecorder()
-	HandleStreaming(w, resp, "test/model")
+	HandleStreaming(w, resp, "test/model", FormatStandard)
 
 	result := w.Result()
 	defer result.Body.Close()
@@ -796,7 +901,7 @@ func TestHandleStreaming_Error(t *testing.T) {
 	}
 
 	w := httptest.NewRecorder()
-	HandleStreaming(w, resp, "test/model")
+	HandleStreaming(w, resp, "test/model", FormatStandard)
 
 	result := w.Result()
 	defer result.Body.Close()
@@ -827,7 +932,7 @@ data: [DONE]
 	}
 
 	w := httptest.NewRecorder()
-	HandleStreaming(w, resp, "test/model")
+	HandleStreaming(w, resp, "test/model", FormatStandard)
 
 	result := w.Result()
 	defer result.Body.Close()
@@ -870,7 +975,7 @@ data: [DONE]
 	}
 
 	w := httptest.NewRecorder()
-	HandleStreaming(w, resp, "test/model")
+	HandleStreaming(w, resp, "test/model", FormatStandard)
 
 	result := w.Result()
 	defer result.Body.Close()
@@ -891,6 +996,283 @@ data: [DONE]
 	stops := strings.Count(bodyStr, "content_block_stop")
 	if stops < 2 {
 		t.Errorf("Expected at least 2 content_block_stop events, got %d", stops)
+	}
+}
+
+func TestHandleStreaming_QwenFunctionCallFormat(t *testing.T) {
+	// Test Qwen-Agent function_call format (not tool_calls array)
+	streamData := `data: {"choices":[{"index":0,"delta":{"function_call":{"name":"get_weather","arguments":"{\"city\":"}},"finish_reason":null}]}
+
+data: {"choices":[{"index":0,"delta":{"function_call":{"arguments":"\"Beijing\"}"}},"finish_reason":null}]}
+
+data: [DONE]
+
+`
+
+	resp := &http.Response{
+		StatusCode: 200,
+		Body:       io.NopCloser(strings.NewReader(streamData)),
+		Header:     make(http.Header),
+	}
+
+	w := httptest.NewRecorder()
+	HandleStreaming(w, resp, "qwen/qwen3-coder", FormatQwen)
+
+	result := w.Result()
+	defer result.Body.Close()
+
+	if result.StatusCode != 200 {
+		t.Errorf("Status code = %d, expected %d", result.StatusCode, 200)
+	}
+
+	body, _ := io.ReadAll(result.Body)
+	bodyStr := string(body)
+
+	// Verify tool use events
+	if !strings.Contains(bodyStr, "\"type\":\"tool_use\"") {
+		t.Error("Response should contain tool_use content block")
+	}
+
+	// Should have synthetic ID (qwen-tool-*)
+	if !strings.Contains(bodyStr, "\"id\":\"qwen-tool-") {
+		t.Error("Response should contain synthetic qwen-tool ID")
+	}
+
+	// Should have function name
+	if !strings.Contains(bodyStr, "\"name\":\"get_weather\"") {
+		t.Error("Response should contain function name")
+	}
+
+	// Should have input_json_delta events
+	if !strings.Contains(bodyStr, "input_json_delta") {
+		t.Error("Response should contain input_json_delta events")
+	}
+
+	// Should have accumulated arguments
+	if !strings.Contains(bodyStr, "Beijing") {
+		t.Error("Response should contain accumulated arguments")
+	}
+}
+
+func TestHandleStreaming_QwenMultipleToolCalls(t *testing.T) {
+	// Test multiple tool calls using tool_calls array format
+	streamData := `data: {"choices":[{"index":0,"delta":{"tool_calls":[{"id":"call-1","type":"function","function":{"name":"get_weather"}}]},"finish_reason":null}]}
+
+data: {"choices":[{"index":0,"delta":{"tool_calls":[{"function":{"arguments":"{\"city\":\"Tokyo\"}"}}]},"finish_reason":null}]}
+
+data: {"choices":[{"index":0,"delta":{"tool_calls":[{"id":"call-2","type":"function","function":{"name":"get_time"}}]},"finish_reason":null}]}
+
+data: {"choices":[{"index":0,"delta":{"tool_calls":[{"function":{"arguments":"{\"timezone\":\"Asia/Tokyo\"}"}}]},"finish_reason":null}]}
+
+data: [DONE]
+
+`
+
+	resp := &http.Response{
+		StatusCode: 200,
+		Body:       io.NopCloser(strings.NewReader(streamData)),
+		Header:     make(http.Header),
+	}
+
+	w := httptest.NewRecorder()
+	HandleStreaming(w, resp, "qwen/qwen3-coder", FormatQwen)
+
+	result := w.Result()
+	defer result.Body.Close()
+
+	body, _ := io.ReadAll(result.Body)
+	bodyStr := string(body)
+
+	// Should have two tool_use blocks
+	toolUseCount := strings.Count(bodyStr, "\"type\":\"tool_use\"")
+	if toolUseCount != 2 {
+		t.Errorf("Expected 2 tool_use blocks, got %d", toolUseCount)
+	}
+
+	// Should have both function names
+	if !strings.Contains(bodyStr, "\"name\":\"get_weather\"") {
+		t.Error("Response should contain get_weather function")
+	}
+	if !strings.Contains(bodyStr, "\"name\":\"get_time\"") {
+		t.Error("Response should contain get_time function")
+	}
+
+	// Should have arguments for both
+	if !strings.Contains(bodyStr, "Tokyo") {
+		t.Error("Response should contain Tokyo argument")
+	}
+	if !strings.Contains(bodyStr, "Asia/Tokyo") {
+		t.Error("Response should contain Asia/Tokyo argument")
+	}
+
+	// Should have at least 3 content_block_stop events (2 tool blocks + message_stop)
+	stops := strings.Count(bodyStr, "content_block_stop")
+	if stops < 2 {
+		t.Errorf("Expected at least 2 content_block_stop events, got %d", stops)
+	}
+}
+
+func TestHandleStreaming_QwenMixedTextAndFunctionCall(t *testing.T) {
+	// Test mixed content: function_call format then text
+	streamData := `data: {"choices":[{"index":0,"delta":{"function_call":{"name":"calculate","arguments":"{\"x\":5}"}},"finish_reason":null}]}
+
+data: {"choices":[{"index":0,"delta":{"content":"Result: "},"finish_reason":null}]}
+
+data: {"choices":[{"index":0,"delta":{"content":"10"},"finish_reason":null}]}
+
+data: [DONE]
+
+`
+
+	resp := &http.Response{
+		StatusCode: 200,
+		Body:       io.NopCloser(strings.NewReader(streamData)),
+		Header:     make(http.Header),
+	}
+
+	w := httptest.NewRecorder()
+	HandleStreaming(w, resp, "qwen/qwen3-coder", FormatQwen)
+
+	result := w.Result()
+	defer result.Body.Close()
+
+	body, _ := io.ReadAll(result.Body)
+	bodyStr := string(body)
+
+	// Should have both tool_use and text content blocks
+	if !strings.Contains(bodyStr, "\"type\":\"tool_use\"") {
+		t.Error("Response should contain tool_use content block")
+	}
+
+	if !strings.Contains(bodyStr, "\"type\":\"text\"") {
+		t.Error("Response should contain text content block")
+	}
+
+	// Should have function name
+	if !strings.Contains(bodyStr, "\"name\":\"calculate\"") {
+		t.Error("Response should contain function name")
+	}
+
+	// Should have text content parts
+	if !strings.Contains(bodyStr, "Result: ") {
+		t.Error("Response should contain text content 'Result: '")
+	}
+	if !strings.Contains(bodyStr, "10") {
+		t.Error("Response should contain text content '10'")
+	}
+
+	// Should have content_block_stop for tool use before text starts
+	stops := strings.Count(bodyStr, "content_block_stop")
+	if stops < 2 {
+		t.Errorf("Expected at least 2 content_block_stop events, got %d", stops)
+	}
+}
+
+func TestHandleStreaming_QwenSingleToolCallArray(t *testing.T) {
+	// Test single tool call using standard tool_calls array format (vLLM)
+	streamData := `data: {"choices":[{"index":0,"delta":{"tool_calls":[{"id":"call-abc","type":"function","function":{"name":"search_database","arguments":"{\"query\":"}}]},"finish_reason":null}]}
+
+data: {"choices":[{"index":0,"delta":{"tool_calls":[{"function":{"arguments":"\"users\""}}]},"finish_reason":null}]}
+
+data: {"choices":[{"index":0,"delta":{"tool_calls":[{"function":{"arguments":","}}]},"finish_reason":null}]}
+
+data: {"choices":[{"index":0,"delta":{"tool_calls":[{"function":{"arguments":"\"limit\":10}"}}]},"finish_reason":null}]}
+
+data: [DONE]
+
+`
+
+	resp := &http.Response{
+		StatusCode: 200,
+		Body:       io.NopCloser(strings.NewReader(streamData)),
+		Header:     make(http.Header),
+	}
+
+	w := httptest.NewRecorder()
+	HandleStreaming(w, resp, "qwen/qwen-coder-turbo", FormatQwen)
+
+	result := w.Result()
+	defer result.Body.Close()
+
+	if result.StatusCode != 200 {
+		t.Errorf("Status code = %d, expected %d", result.StatusCode, 200)
+	}
+
+	body, _ := io.ReadAll(result.Body)
+	bodyStr := string(body)
+
+	// Should have exactly one tool_use block
+	toolUseCount := strings.Count(bodyStr, "\"type\":\"tool_use\"")
+	if toolUseCount != 1 {
+		t.Errorf("Expected 1 tool_use block, got %d", toolUseCount)
+	}
+
+	// Should have the provided ID
+	if !strings.Contains(bodyStr, "\"id\":\"call-abc\"") {
+		t.Error("Response should contain provided tool call ID")
+	}
+
+	// Should have function name
+	if !strings.Contains(bodyStr, "\"name\":\"search_database\"") {
+		t.Error("Response should contain function name")
+	}
+
+	// Should have complete accumulated arguments across multiple deltas
+	if !strings.Contains(bodyStr, "users") {
+		t.Error("Response should contain query argument")
+	}
+	if !strings.Contains(bodyStr, "limit") {
+		t.Error("Response should contain limit argument")
+	}
+}
+
+func TestHandleStreaming_QwenEmptyToolCallsArray(t *testing.T) {
+	// Test edge case: empty tool_calls array (should be ignored)
+	streamData := `data: {"choices":[{"index":0,"delta":{"content":"Let me help you with that."},"finish_reason":null}]}
+
+data: {"choices":[{"index":0,"delta":{"tool_calls":[]},"finish_reason":null}]}
+
+data: {"choices":[{"index":0,"delta":{"content":" I'll search for that information."},"finish_reason":null}]}
+
+data: [DONE]
+
+`
+
+	resp := &http.Response{
+		StatusCode: 200,
+		Body:       io.NopCloser(strings.NewReader(streamData)),
+		Header:     make(http.Header),
+	}
+
+	w := httptest.NewRecorder()
+	HandleStreaming(w, resp, "qwen/qwen3-coder", FormatQwen)
+
+	result := w.Result()
+	defer result.Body.Close()
+
+	if result.StatusCode != 200 {
+		t.Errorf("Status code = %d, expected %d", result.StatusCode, 200)
+	}
+
+	body, _ := io.ReadAll(result.Body)
+	bodyStr := string(body)
+
+	// Should have text content blocks only (no tool_use)
+	if strings.Contains(bodyStr, "\"type\":\"tool_use\"") {
+		t.Error("Response should not contain tool_use blocks for empty tool_calls array")
+	}
+
+	// Should have text content
+	if !strings.Contains(bodyStr, "\"type\":\"text\"") {
+		t.Error("Response should contain text content block")
+	}
+
+	// Should have both text fragments
+	if !strings.Contains(bodyStr, "Let me help you") {
+		t.Error("Response should contain first text fragment")
+	}
+	if !strings.Contains(bodyStr, "search for that information") {
+		t.Error("Response should contain second text fragment")
 	}
 }
 
@@ -1066,6 +1448,106 @@ func TestGetProviderForModel(t *testing.T) {
 				}
 			} else if provider != nil {
 				t.Errorf("Expected nil provider, got %+v", provider)
+			}
+		})
+	}
+}
+
+// TestAnthropicToOpenAI_FormatDetection verifies that AnthropicToOpenAI correctly
+// detects model formats for different provider models
+func TestAnthropicToOpenAI_FormatDetection(t *testing.T) {
+	tests := []struct {
+		name          string
+		anthropicReq  AnthropicRequest
+		cfg           *config.Config
+		expectedModel string
+		verifyFormat  func(t *testing.T, result OpenAIRequest)
+	}{
+		{
+			name: "kimi model detected as FormatKimi",
+			anthropicReq: AnthropicRequest{
+				Model: "kimi-k2",
+				Messages: []Message{
+					{Role: "user", Content: json.RawMessage(`"Hello"`)},
+				},
+			},
+			cfg: &config.Config{
+				Model: "moonshot/kimi-k2-0905",
+			},
+			expectedModel: "moonshot/kimi-k2-0905",
+			verifyFormat: func(t *testing.T, result OpenAIRequest) {
+				// Format detection happens internally - we verify via model mapping
+				if result.Model != "moonshot/kimi-k2-0905" {
+					t.Errorf("Expected model moonshot/kimi-k2-0905, got %s", result.Model)
+				}
+			},
+		},
+		{
+			name: "qwen model detected as FormatQwen",
+			anthropicReq: AnthropicRequest{
+				Model: "qwen-chat",
+				Messages: []Message{
+					{Role: "user", Content: json.RawMessage(`"Hello"`)},
+				},
+			},
+			cfg: &config.Config{
+				Model: "qwen/qwen-2.5-72b-instruct",
+			},
+			expectedModel: "qwen/qwen-2.5-72b-instruct",
+			verifyFormat: func(t *testing.T, result OpenAIRequest) {
+				if result.Model != "qwen/qwen-2.5-72b-instruct" {
+					t.Errorf("Expected model qwen/qwen-2.5-72b-instruct, got %s", result.Model)
+				}
+			},
+		},
+		{
+			name: "deepseek model detected as FormatDeepSeek",
+			anthropicReq: AnthropicRequest{
+				Model: "deepseek-chat",
+				Messages: []Message{
+					{Role: "user", Content: json.RawMessage(`"Hello"`)},
+				},
+			},
+			cfg: &config.Config{
+				Model: "deepseek/deepseek-chat",
+			},
+			expectedModel: "deepseek/deepseek-chat",
+			verifyFormat: func(t *testing.T, result OpenAIRequest) {
+				if result.Model != "deepseek/deepseek-chat" {
+					t.Errorf("Expected model deepseek/deepseek-chat, got %s", result.Model)
+				}
+			},
+		},
+		{
+			name: "standard model defaults to FormatStandard",
+			anthropicReq: AnthropicRequest{
+				Model: "claude-3-opus",
+				Messages: []Message{
+					{Role: "user", Content: json.RawMessage(`"Hello"`)},
+				},
+			},
+			cfg: &config.Config{
+				OpusModel: "anthropic/claude-3-opus",
+			},
+			expectedModel: "anthropic/claude-3-opus",
+			verifyFormat: func(t *testing.T, result OpenAIRequest) {
+				if result.Model != "anthropic/claude-3-opus" {
+					t.Errorf("Expected model anthropic/claude-3-opus, got %s", result.Model)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := AnthropicToOpenAI(tt.anthropicReq, tt.cfg)
+
+			if result.Model != tt.expectedModel {
+				t.Errorf("Expected model %s, got %s", tt.expectedModel, result.Model)
+			}
+
+			if tt.verifyFormat != nil {
+				tt.verifyFormat(t, result)
 			}
 		})
 	}

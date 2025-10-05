@@ -1,0 +1,104 @@
+{
+  "feature": "toolcalling",
+  "user_story": "As an Athena user, I want the proxy to reliably translate tool calling between Anthropic and OpenRouter formats so that I can use Claude Code with alternative models (DeepSeek, Qwen3-Coder, Kimi K2) that support function calling",
+  "acceptance_criteria": [
+    "GIVEN an Anthropic API request with tool definitions WHEN the request is proxied to OpenRouter THEN tool schemas are correctly translated to OpenAI format with unsupported properties removed",
+    "GIVEN a tool_use content block in Anthropic format WHEN transformed to OpenAI format THEN it becomes a tool_call with proper ID, function name, and arguments",
+    "GIVEN a tool_result content block in Anthropic format WHEN transformed to OpenAI format THEN it becomes a message with role='tool' and matching tool_call_id",
+    "GIVEN an OpenRouter streaming response with tool call deltas WHEN processed by the streaming handler THEN content_block_start, content_block_delta, and content_block_stop events are emitted in Anthropic SSE format",
+    "GIVEN a multi-turn conversation with tool calls and responses WHEN validateToolCalls() is invoked THEN all tool_use blocks have matching tool_result blocks",
+    "GIVEN a Kimi K2 model request WHEN provider-specific handling is applied THEN special tokens are properly managed in tool call translation",
+    "GIVEN a Qwen3-Coder model request WHEN provider-specific handling is applied THEN Hermes-style tool calling format is used",
+    "GIVEN a DeepSeek model request WHEN provider-specific handling is applied THEN standard OpenAI tool calling format is used",
+    "System shall return proper error responses to the client when tool call translation or validation fails",
+    "GIVEN a model name containing multiple provider keywords or no clear provider match WHEN provider detection is performed THEN system uses precedence order (Kimi > Qwen > DeepSeek) or falls back to standard OpenAI format",
+    "GIVEN a partial tool call chunk that fails provider-specific transformation WHEN streaming error is detected THEN system sends error SSE event and gracefully terminates stream with appropriate error message",
+    "GIVEN a tool call transformation to provider-specific format WHEN validation is performed before sending to OpenRouter THEN malformed provider formats are rejected with clear error messages (HTTP 400)"
+  ],
+  "business_rules": [
+    "All three target models must be supported: DeepSeek (standard OpenAI format), Qwen3-Coder (Hermes-style), Kimi K2 (special tokens)",
+    "Tool calling translation must be transparent to the Claude Code client",
+    "Provider-specific quirks must be detected based on model name/identifier in the request",
+    "All requests are proxied through OpenRouter - provider-specific handling applies to OpenRouter's response format for each model",
+    "Streaming tool calls must maintain state consistency across SSE events",
+    "Tool call validation must ensure every tool_use has a corresponding tool_result in multi-turn conversations",
+    "JSON schema cleaning must continue to remove unsupported properties like 'format: uri'",
+    "Error conditions in tool translation must propagate proper HTTP status codes to the client",
+    "Provider detection must use precedence order (Kimi > Qwen > DeepSeek > Standard) when model name is ambiguous or contains multiple provider keywords",
+    "Streaming tool calls must buffer provider-specific tokens up to 10KB before erroring to prevent memory exhaustion",
+    "Provider format validation failures must return HTTP 400 with error details before sending to OpenRouter to prevent unnecessary upstream requests"
+  ],
+  "scope": {
+    "included": [
+      "Provider detection logic based on model identifier",
+      "Provider-specific tool call format transformations (Kimi K2 special tokens, Qwen Hermes-style, DeepSeek standard)",
+      "Enhanced streaming support for provider-specific tool call formats",
+      "Integration with existing transformAnthropicToOpenAI() and OpenAIToAnthropic() functions",
+      "Integration with existing validateToolCalls() function",
+      "Testing with all three target models (DeepSeek, Qwen3-Coder, Kimi K2)"
+    ],
+    "excluded": [
+      "Custom tool calling implementations beyond format translation",
+      "Fixes for provider-side reliability issues (external to Athena)",
+      "Retry logic or error recovery for failed tool calls",
+      "Tool execution (only translation between API formats)",
+      "Support for additional models beyond DeepSeek, Qwen3-Coder, and Kimi K2 in initial implementation"
+    ]
+  },
+  "aligns_with": "Enhances Athena's core value proposition of enabling Claude Code users to access diverse AI models by ensuring tool calling works transparently across providers with different implementation quirks, maintaining full compatibility with Claude Code workflows while extending model choice",
+  "dependencies": [
+    "transform.AnthropicToOpenAI() - Main transformation function that needs provider-specific logic",
+    "transform.transformMessage() - Message conversion that handles tool_use and tool_result blocks",
+    "transform.validateToolCalls() - Tool call validation ensuring matching responses",
+    "transform.OpenAIToAnthropic() - Response transformation back to Anthropic format",
+    "transform.HandleStreaming() - Streaming handler for SSE processing",
+    "transform.processStreamDelta() - Processes streaming deltas including tool call chunks",
+    "transform.removeUriFormat() - JSON schema cleaning function",
+    "AnthropicRequest.Tools - Tool definition structure",
+    "OpenAIMessage.ToolCalls - OpenAI tool call structure",
+    "ContentBlock - Handles tool_use and tool_result content types",
+    "Config.Model, Config.OpusModel, Config.SonnetModel, Config.HaikuModel - Model mapping for provider detection"
+  ],
+  "technical_details": [
+    {
+      "area": "Provider Detection",
+      "description": "Identify which model/provider is being used to apply appropriate tool calling format",
+      "implementation_notes": "Add provider detection function that inspects the resolved model name (after model mapping) and returns provider type enum (DeepSeek, Qwen, Kimi). Pattern match on model strings: contains 'deepseek' → DeepSeek, contains 'qwen' → Qwen, contains 'kimi' or 'k2' → Kimi"
+    },
+    {
+      "area": "Kimi K2 Special Token Handling",
+      "description": "Parse Kimi-specific special tokens from OpenRouter responses",
+      "implementation_notes": "OpenRouter returns Kimi K2 responses with special tokens: <|tool_calls_section_begin|>, <|tool_call_begin|>, <|tool_call_argument_begin|>, <|tool_call_end|>, <|tool_calls_section_end|>. Tool ID format: functions.{func_name}:{idx}. Must parse these tokens from response and convert to OpenAI-compatible format. Streaming requires buffering until complete section received (max 10KB buffer). See provider-formats.md for parsing logic and examples."
+    },
+    {
+      "area": "Qwen Hermes-Style Format",
+      "description": "Handle Hermes-style tool call format from OpenRouter/Qwen3-Coder",
+      "implementation_notes": "OpenRouter returns Qwen3-Coder responses in Hermes format when model uses vLLM with --tool-call-parser hermes. Can receive either tool_calls array (OpenAI-like) or function_call object (Qwen-Agent style). Tool results can be role: 'tool' with tool_call_id OR role: 'function' with name. Must handle both formats. Note: Qwen2.5-Coder unreliable (GitHub #180), only support Qwen3/Qwen3-Coder. Context >100K may cause nonsense generation. See provider-formats.md for examples."
+    },
+    {
+      "area": "DeepSeek Standard Format",
+      "description": "Use standard OpenAI tool calling format for DeepSeek via OpenRouter",
+      "implementation_notes": "DeepSeek via OpenRouter uses pure OpenAI-compatible format. No special handling required - existing transform.go logic works as-is. Tool definitions, tool calls, and tool results all follow standard OpenAI format exactly. Streaming uses standard delta.tool_calls chunks. This is the default/fallback behavior."
+    },
+    {
+      "area": "Streaming Provider Handling",
+      "description": "Apply provider-specific transformations in streaming mode",
+      "implementation_notes": "Extend processStreamDelta() to apply provider-specific logic when processing tool_call deltas. Ensure toolCallJSONMap state tracking handles provider formats correctly. May need provider context passed through streaming state"
+    },
+    {
+      "area": "Tool Schema Transformation",
+      "description": "Ensure tool schemas are compatible with provider-specific requirements",
+      "implementation_notes": "Extend removeUriFormat() or create provider-specific schema transformation functions. Some providers may have additional unsupported schema properties beyond 'format: uri'"
+    },
+    {
+      "area": "Error Handling",
+      "description": "Proper error propagation when provider-specific transformation fails",
+      "implementation_notes": "Add error returns to transformation functions when provider-specific logic encounters invalid input. Map to appropriate HTTP status codes (400 for client errors, 502 for upstream provider issues) in server.handleMessages()"
+    },
+    {
+      "area": "Configuration",
+      "description": "Optional provider override configuration",
+      "implementation_notes": "Consider adding optional config field to force provider type for specific model mappings, bypassing auto-detection. Low priority - implement if auto-detection proves unreliable"
+    }
+  ]
+}

@@ -1,0 +1,32 @@
+{
+  "raw_user_story": "As an Athena user, I want the proxy to reliably translate tool calling between Anthropic and OpenRouter formats so that I can use Claude Code with alternative models that support function calling",
+  "raw_criteria": [
+    "Tool calls from Anthropic format are correctly translated to OpenAI/OpenRouter format",
+    "Tool responses are properly translated back to Anthropic format",
+    "Streaming tool calls work correctly with SSE events",
+    "Multi-turn tool conversations maintain state correctly",
+    "The system handles provider-specific quirks (Kimi K2 special tokens, Qwen Hermes-style, DeepSeek standard format)"
+  ],
+  "raw_rules": [
+    "Support all three models: DeepSeek, Qwen3-Coder, Kimi K2",
+    "Make tool calling work transparently through the proxy",
+    "Return error to client when tool calling fails",
+    "Detect which model is being used and apply appropriate tool calling translation",
+    "Handle streaming tool calls with proper SSE event translation"
+  ],
+  "raw_scope": {
+    "included": [
+      "Tool call translation (Anthropic → OpenRouter format)",
+      "Tool response translation (OpenRouter → Anthropic format)",
+      "Support for DeepSeek, Qwen3-Coder, and Kimi K2",
+      "Streaming support for tool calls",
+      "Provider-specific format handling (special tokens, Hermes-style, standard OpenAI)"
+    ],
+    "excluded": [
+      "Custom tool calling implementations beyond translation",
+      "Provider-specific reliability fixes (those are external issues)",
+      "Retry logic for failed tool calls",
+      "Tool execution (only translation, not execution)"
+    ]
+  }
+}
