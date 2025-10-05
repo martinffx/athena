@@ -129,7 +129,7 @@ jobs:
         2. Make it executable: `chmod +x athena-<platform>`
         3. Copy example config: `cp athena.example.yml ~/.config/athena/athena.yml`
         4. Edit config with your OpenRouter API key
-        5. Run: `./athena-<platform> code` (launches daemon + Claude Code)
+        5. Run: `./athena-<platform> start` to launch daemon
 
         ## Files
 
@@ -147,17 +147,11 @@ jobs:
 
         ## Usage
 
-        ### Launch daemon + Claude Code:
-        ```bash
-        ./athena-<platform> code
-        ```
-
         ### Daemon management:
         ```bash
         ./athena-<platform> start   # Start daemon in background
         ./athena-<platform> stop    # Stop daemon
         ./athena-<platform> status  # Check daemon status
-        ./athena-<platform> logs    # View daemon logs
         ```
 
         ### Run server directly (foreground):
@@ -183,17 +177,16 @@ jobs:
           - Tool/function calling support
           - Configurable model mappings (Opus, Sonnet, Haiku)
           - Multiple configuration methods (CLI, config files, env vars)
-          - Built-in daemon management (start, stop, status, logs)
-          - Integrated Claude Code launcher (`athena code`)
-          - Structured logging with rotation
+          - Built-in daemon management (start, stop, status)
+          - Structured logging
 
           ### Quick Start
           ```bash
           # Download binary for your platform
           chmod +x athena-<platform>
 
-          # Launch daemon + Claude Code
-          ./athena-<platform> code
+          # Launch daemon
+          ./athena-<platform> start
           ```
 
           ### Downloads
