@@ -124,7 +124,6 @@ var statusCmd = &cobra.Command{
 	},
 }
 
-
 func init() {
 	// Persistent flags available to all commands
 	rootCmd.PersistentFlags().StringVar(&configFile, "config", "", "Path to config file (YAML)")
