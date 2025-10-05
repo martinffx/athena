@@ -10,36 +10,31 @@ import (
 
 // Compiled regex patterns for Kimi K2 tool call parsing (optimized for reuse)
 var (
-	kimiSectionPattern  = regexp.MustCompile(`(?s)<\|tool_calls_section_begin\|>(.*?)<\|tool_calls_section_end\|>`)
-	kimiToolCallPattern = regexp.MustCompile(`(?s)<\|tool_call_begin\|>\s*(.+?)\s*<\|tool_call_argument_begin\|>\s*(.*?)\s*<\|tool_call_end\|>`)
-	kimiIDPattern       = regexp.MustCompile(`^functions\.(.+?):(\d+)$`)
+	kimiSectionPattern      = regexp.MustCompile(`(?s)<\|tool_calls_section_begin\|>(.*?)<\|tool_calls_section_end\|>`)
+	kimiSectionBeginPattern = regexp.MustCompile(`<\|tool_calls_section_begin\|>`)
+	kimiToolCallPattern     = regexp.MustCompile(`(?s)<\|tool_call_begin\|>\s*(.+?)\s*<\|tool_call_argument_begin\|>\s*(.*?)\s*<\|tool_call_end\|>`)
+	kimiIDPattern           = regexp.MustCompile(`^functions\.(.+?):(\d+)$`)
 )
 
 // parseKimiToolCalls extracts tool calls from Kimi K2's special token format.
 // Format: <|tool_calls_section_begin|>...<|tool_calls_section_end|>
 // Each tool call: <|tool_call_begin|>functions.{name}:{idx}<|tool_call_argument_begin|>{json}<|tool_call_end|>
 func parseKimiToolCalls(content string) ([]ToolCall, error) {
-	// Check if content contains tool calls section
-	if !strings.Contains(content, "<|tool_calls_section_begin|>") {
-		// No tool calls present - not an error, return empty array
-		return []ToolCall{}, nil
-	}
-
-	// Verify section is properly closed
-	if !strings.Contains(content, "<|tool_calls_section_end|>") {
-		return nil, fmt.Errorf("malformed Kimi tool calls: missing section end token")
-	}
-
 	// Extract the tool calls section using pre-compiled regex
 	sectionMatch := kimiSectionPattern.FindStringSubmatch(content)
 	if len(sectionMatch) < 2 {
-		return nil, fmt.Errorf("failed to extract tool calls section")
+		// No complete section found - check if it's malformed
+		if kimiSectionBeginPattern.MatchString(content) {
+			// Begin token exists but no complete section = malformed
+			return nil, fmt.Errorf("malformed Kimi tool calls: missing section end token")
+		}
+		// No tool calls section at all - not an error, return empty array
+		return []ToolCall{}, nil
 	}
 	section := sectionMatch[1]
 
 	// Extract individual tool calls using pre-compiled regex
 	matches := kimiToolCallPattern.FindAllStringSubmatch(section, -1)
-
 	if len(matches) == 0 {
 		// Section exists but no valid tool calls
 		return []ToolCall{}, nil
@@ -98,8 +93,8 @@ func handleKimiStreaming(w http.ResponseWriter, flusher http.Flusher, state *Str
 
 	bufferedContent := state.FormatContext.KimiBuffer.String()
 
-	// Check if we have a complete section
-	if !strings.Contains(bufferedContent, "<|tool_calls_section_end|>") {
+	// Check if we have a complete section using regex
+	if !kimiSectionPattern.MatchString(bufferedContent) {
 		// Incomplete section, continue buffering
 		return nil
 	}

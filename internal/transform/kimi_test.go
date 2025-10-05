@@ -11,14 +11,11 @@ const (
 	testFuncGetWeather = "get_weather"
 )
 
-<<<<<<< HEAD
 // noopFlusher is a test helper that implements http.Flusher
 type noopFlusher struct{}
 
 func (f *noopFlusher) Flush() {}
 
-=======
->>>>>>> c876b8bd3bc9498fcf05a1ea87d7b927bcca9de3
 func TestParseKimiToolCalls(t *testing.T) {
 	tests := []struct {
 		name      string
