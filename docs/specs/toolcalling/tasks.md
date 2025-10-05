@@ -5,53 +5,57 @@ This document provides a human-readable checklist for implementing the tool call
 ## Progress Overview
 
 - **Total Phases**: 7
+- **Completed Phases**: 2 (Foundation, Provider Detection)
 - **Total Tasks**: 34
+- **Completed Tasks**: 6
+- **Progress**: 18% (6/34 tasks)
 - **Parallel Execution**: Phases 3 (Kimi) and 4 (Qwen) can run in parallel
+- **Critical Path**: Phase 1 → Phase 2 → Phase 5 (Integration) → Phase 6 (Error Handling) → Phase 7 (Documentation)
 
 ---
 
-## Phase 1: Foundation - Type System
+## Phase 1: Foundation - Type System ✅
 
 **Dependencies**: None (foundation layer)
 **Parallel Execution**: All tasks can be done together (single file)
 
 ### ✅ Tasks
 
-- [ ] **1.1** Add ModelFormat enum to types.go
+- [x] **1.1** Add ModelFormat enum to types.go
   - Define `ModelFormat` type with iota constants
   - Add constants: `FormatDeepSeek`, `FormatQwen`, `FormatKimi`, `FormatStandard`
   - Implement `String()` method for readable format names
   - **File**: `internal/transform/types.go`
 
-- [ ] **1.2** Add TransformContext struct to types.go
+- [x] **1.2** Add TransformContext struct to types.go
   - Define struct with `Format ModelFormat` and `Config *config.Config` fields
   - Document field purposes
   - **File**: `internal/transform/types.go`
 
-- [ ] **1.3** Add StreamState struct to types.go
+- [x] **1.3** Add StreamState struct to types.go
   - Define struct with 6 fields: `ContentBlockIndex`, `HasStartedTextBlock`, `IsToolUse`, `CurrentToolCallID`, `ToolCallJSONMap`, `FormatContext`
   - Consolidates 8+ parameters into single struct
   - **File**: `internal/transform/types.go`
 
-- [ ] **1.4** Add FormatStreamContext struct to types.go
+- [x] **1.4** Add FormatStreamContext struct to types.go
   - Define struct with `Format`, `KimiBuffer`, `KimiBufferLimit`, `KimiInToolSection` fields
   - Isolates format-specific streaming state
   - **File**: `internal/transform/types.go`
 
 ---
 
-## Phase 2: Provider Detection
+## Phase 2: Provider Detection ✅
 
 **Dependencies**: Phase 1 (needs ModelFormat enum)
 
 ### ✅ Tasks
 
-- [ ] **2.1** Create internal/transform/providers.go file
+- [x] **2.1** Create internal/transform/providers.go file
   - Create file with `package transform` declaration
   - Add imports: `strings`, `regexp`, `fmt`
   - **File**: `internal/transform/providers.go`
 
-- [ ] **2.2** Implement DetectModelFormat function (TDD)
+- [x] **2.2** Implement DetectModelFormat function (TDD)
   - **Test**: Write 12 test cases in `providers_test.go`
     - `moonshot/kimi-k2` → `FormatKimi`
     - `kimi-k2-instruct` → `FormatKimi`
