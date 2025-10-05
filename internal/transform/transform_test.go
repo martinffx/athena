@@ -1063,6 +1063,114 @@ data: [DONE]
 	}
 }
 
+func TestHandleStreaming_QwenSingleToolCallArray(t *testing.T) {
+	// Test single tool call using standard tool_calls array format (vLLM)
+	streamData := `data: {"choices":[{"index":0,"delta":{"tool_calls":[{"id":"call-abc","type":"function","function":{"name":"search_database","arguments":"{\"query\":"}}]},"finish_reason":null}]}
+
+data: {"choices":[{"index":0,"delta":{"tool_calls":[{"function":{"arguments":"\"users\""}}]},"finish_reason":null}]}
+
+data: {"choices":[{"index":0,"delta":{"tool_calls":[{"function":{"arguments":","}}]},"finish_reason":null}]}
+
+data: {"choices":[{"index":0,"delta":{"tool_calls":[{"function":{"arguments":"\"limit\":10}"}}]},"finish_reason":null}]}
+
+data: [DONE]
+
+`
+
+	resp := &http.Response{
+		StatusCode: 200,
+		Body:       io.NopCloser(strings.NewReader(streamData)),
+		Header:     make(http.Header),
+	}
+
+	w := httptest.NewRecorder()
+	HandleStreaming(w, resp, "qwen/qwen-coder-turbo")
+
+	result := w.Result()
+	defer result.Body.Close()
+
+	if result.StatusCode != 200 {
+		t.Errorf("Status code = %d, expected %d", result.StatusCode, 200)
+	}
+
+	body, _ := io.ReadAll(result.Body)
+	bodyStr := string(body)
+
+	// Should have exactly one tool_use block
+	toolUseCount := strings.Count(bodyStr, "\"type\":\"tool_use\"")
+	if toolUseCount != 1 {
+		t.Errorf("Expected 1 tool_use block, got %d", toolUseCount)
+	}
+
+	// Should have the provided ID
+	if !strings.Contains(bodyStr, "\"id\":\"call-abc\"") {
+		t.Error("Response should contain provided tool call ID")
+	}
+
+	// Should have function name
+	if !strings.Contains(bodyStr, "\"name\":\"search_database\"") {
+		t.Error("Response should contain function name")
+	}
+
+	// Should have complete accumulated arguments across multiple deltas
+	if !strings.Contains(bodyStr, "users") {
+		t.Error("Response should contain query argument")
+	}
+	if !strings.Contains(bodyStr, "limit") {
+		t.Error("Response should contain limit argument")
+	}
+}
+
+func TestHandleStreaming_QwenEmptyToolCallsArray(t *testing.T) {
+	// Test edge case: empty tool_calls array (should be ignored)
+	streamData := `data: {"choices":[{"index":0,"delta":{"content":"Let me help you with that."},"finish_reason":null}]}
+
+data: {"choices":[{"index":0,"delta":{"tool_calls":[]},"finish_reason":null}]}
+
+data: {"choices":[{"index":0,"delta":{"content":" I'll search for that information."},"finish_reason":null}]}
+
+data: [DONE]
+
+`
+
+	resp := &http.Response{
+		StatusCode: 200,
+		Body:       io.NopCloser(strings.NewReader(streamData)),
+		Header:     make(http.Header),
+	}
+
+	w := httptest.NewRecorder()
+	HandleStreaming(w, resp, "qwen/qwen3-coder")
+
+	result := w.Result()
+	defer result.Body.Close()
+
+	if result.StatusCode != 200 {
+		t.Errorf("Status code = %d, expected %d", result.StatusCode, 200)
+	}
+
+	body, _ := io.ReadAll(result.Body)
+	bodyStr := string(body)
+
+	// Should have text content blocks only (no tool_use)
+	if strings.Contains(bodyStr, "\"type\":\"tool_use\"") {
+		t.Error("Response should not contain tool_use blocks for empty tool_calls array")
+	}
+
+	// Should have text content
+	if !strings.Contains(bodyStr, "\"type\":\"text\"") {
+		t.Error("Response should contain text content block")
+	}
+
+	// Should have both text fragments
+	if !strings.Contains(bodyStr, "Let me help you") {
+		t.Error("Response should contain first text fragment")
+	}
+	if !strings.Contains(bodyStr, "search for that information") {
+		t.Error("Response should contain second text fragment")
+	}
+}
+
 func TestAnthropicToOpenAI_ProviderRouting(t *testing.T) {
 	tests := []struct {
 		name             string

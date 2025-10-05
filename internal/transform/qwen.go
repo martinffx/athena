@@ -2,13 +2,24 @@ package transform
 
 import (
 	"fmt"
+	"sync/atomic"
 	"time"
 )
 
+// toolCallCounter provides unique sequence numbers for synthetic IDs
+var toolCallCounter atomic.Uint64
+
 // parseQwenToolCall accepts both OpenAI tool_calls array AND Qwen-Agent
 // function_call object from OpenRouter responses. Handles dual format:
-// 1. vLLM format: tool_calls array with id, type, function fields
-// 2. Qwen-Agent format: function_call object with name and arguments
+//
+// Format 1 (vLLM with hermes parser):
+//
+//	{"tool_calls":[{"id":"call-123","type":"function","function":{"name":"get_weather","arguments":"{\"city\":\"Tokyo\"}"}}]}
+//
+// Format 2 (Qwen-Agent):
+//
+//	{"function_call":{"name":"get_weather","arguments":"{\"city\":\"Beijing\"}"}}
+//
 // Returns unified ToolCall array with synthetic IDs for function_call format.
 func parseQwenToolCall(delta map[string]interface{}) []ToolCall {
 	var toolCalls []ToolCall
@@ -66,7 +77,7 @@ func getString(m map[string]interface{}, key string) string {
 }
 
 // generateSyntheticID creates a unique ID for function_call format
-// Uses timestamp for uniqueness across multiple tool calls
+// Uses timestamp combined with atomic counter to prevent collisions
 func generateSyntheticID() string {
-	return fmt.Sprintf("qwen-tool-%d", time.Now().UnixNano())
+	return fmt.Sprintf("qwen-tool-%d-%d", time.Now().UnixNano(), toolCallCounter.Add(1))
 }
