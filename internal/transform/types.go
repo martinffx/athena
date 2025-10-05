@@ -2,6 +2,7 @@ package transform
 
 import (
 	"encoding/json"
+	"strings"
 
 	"athena/internal/config"
 )
@@ -84,4 +85,57 @@ type ContentBlock struct {
 	Input     json.RawMessage `json:"input,omitempty"`
 	ToolUseID string          `json:"tool_use_id,omitempty"`
 	Content   json.RawMessage `json:"content,omitempty"`
+}
+
+// ModelFormat identifies which tool calling response format OpenRouter will return
+// based on the model being used
+type ModelFormat int
+
+const (
+	FormatDeepSeek ModelFormat = iota // Standard OpenAI format
+	FormatQwen                        // Hermes-style format
+	FormatKimi                        // Special tokens format
+	FormatStandard                    // Default OpenAI-compatible fallback
+)
+
+// String returns a human-readable format name for logging
+func (f ModelFormat) String() string {
+	switch f {
+	case FormatDeepSeek:
+		return "deepseek"
+	case FormatQwen:
+		return "qwen"
+	case FormatKimi:
+		return "kimi"
+	default:
+		return "standard"
+	}
+}
+
+// Context encapsulates model format information and configuration
+// for the transformation pipeline, passed through transformation functions
+// instead of multiple parameters
+type Context struct {
+	Format ModelFormat    // The detected tool call format for this request based on model ID
+	Config *config.Config // Reference to global configuration for model mappings
+}
+
+// StreamState consolidates all streaming state into a single struct to reduce
+// parameter count from 8+ to 2 in processStreamDelta
+type StreamState struct {
+	ContentBlockIndex   int                  // Current content block index in Anthropic format
+	HasStartedTextBlock bool                 // Whether a text content block has been started
+	IsToolUse           bool                 // Whether currently processing tool calls
+	CurrentToolCallID   string               // ID of the current tool call being streamed
+	ToolCallJSONMap     map[string]string    // Accumulated JSON arguments per tool call ID
+	FormatContext       *FormatStreamContext // Model format-specific streaming state
+}
+
+// FormatStreamContext isolates model format-specific streaming state
+// (primarily Kimi K2 buffering) from general streaming state
+type FormatStreamContext struct {
+	Format            ModelFormat     // Which tool call format is being streamed
+	KimiBuffer        strings.Builder // Buffer for Kimi K2 special tokens across chunks
+	KimiBufferLimit   int             // Max buffer size (10KB)
+	KimiInToolSection bool            // Whether currently inside tool_calls_section
 }

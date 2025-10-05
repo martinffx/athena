@@ -1,0 +1,274 @@
+{
+  "requirements": {
+    "entities": [
+      "Provider enum (ProviderDeepSeek, ProviderQwen, ProviderKimi, ProviderStandard)",
+      "TransformContext struct (contains Provider, Config)",
+      "StreamState struct (ContentBlockIndex, HasStartedTextBlock, IsToolUse, CurrentToolCallID, ToolCallJSONMap, ProviderContext)",
+      "ProviderStreamContext struct (Provider, KimiBuffer, HermesState)",
+      "KimiStreamBuffer struct (buffer strings.Builder, maxSize int, inToolSection bool)",
+      "ToolCall struct (id, type, function with name and arguments)",
+      "ToolUse and ToolResult content blocks (already exist in ContentBlock)",
+      "Error types for provider-specific transformation failures"
+    ],
+    "data_persistence": "No - this is request/response transformation only. All state is per-request and ephemeral. Streaming state is maintained only during the lifetime of a single SSE connection. No database or persistent storage required.",
+    "api_needed": "No - this feature enhances the existing /v1/messages endpoint. The endpoint already exists and handles Anthropic API requests. Tool calling support extends the transformation logic within the same endpoint to handle provider-specific tool call formats (Kimi K2 special tokens, Qwen Hermes-style, DeepSeek standard OpenAI).",
+    "components": [
+      "internal/transform/transform.go - Core transformation logic (~400 lines, modified to use TransformContext)",
+      "internal/transform/providers.go - NEW FILE: Provider detection (DetectProvider), Kimi parser (parseKimiToolCalls, KimiStreamBuffer), Qwen parser (parseQwenToolCall), provider-specific transformations (~250 lines)",
+      "internal/transform/streaming.go - NEW FILE: Streaming helpers with provider context (processStreamDelta, handleKimiStreaming, provider-specific SSE processing) (~300 lines)",
+      "internal/transform/types.go - Existing file, may need Provider enum and new context structs (~88 lines currently)",
+      "internal/config/config.go - Potential additions for optional provider override configuration (low priority)",
+      "cmd/athena/server.go - handleMessages function may need error handling updates for provider transformation failures"
+    ],
+    "business_rules": [
+      "Multi-Model Support: All three target models must be supported - DeepSeek (standard OpenAI format), Qwen3-Coder (Hermes-style), Kimi K2 (special tokens)",
+      "Transparency: Tool calling translation must be transparent to the Claude Code client - client only sees Anthropic API format",
+      "Provider Detection: Provider-specific quirks must be detected based on model name/identifier using pattern matching (deepseek, qwen, kimi/k2, moonshot)",
+      "OpenRouter Proxying: All requests are proxied through OpenRouter - provider-specific handling applies to OpenRouter's response format for each model",
+      "Streaming State Consistency: Streaming tool calls must maintain state consistency across SSE events, buffering incomplete provider-specific tokens",
+      "Tool Call Validation: Tool call validation must ensure every tool_use has a corresponding tool_result in multi-turn conversations (existing validateToolCalls)",
+      "Schema Cleaning: JSON schema cleaning must continue to remove unsupported properties like 'format: uri' (existing removeUriFormat)",
+      "Error Propagation: Error conditions must propagate proper HTTP status codes (400 client errors, 502 gateway errors, 500 internal errors)",
+      "Provider Precedence: Provider detection uses precedence order Kimi > Qwen > DeepSeek > Standard when model name is ambiguous",
+      "Streaming Buffer Limits: Kimi K2 streaming must buffer special tokens up to 10KB before erroring to prevent memory exhaustion",
+      "Pre-Send Validation: Provider format validation failures must return HTTP 400 before sending to OpenRouter to prevent unnecessary upstream requests"
+    ],
+    "domains": [
+      "Message Transformation Domain: Converting between Anthropic and OpenAI/OpenRouter formats with provider-specific adaptations",
+      "Provider Detection Domain: Identifying which AI model provider is being used based on model identifiers to apply correct format handling",
+      "Streaming Domain: Processing Server-Sent Events (SSE) with provider-specific chunking and buffering strategies",
+      "Tool Call Parsing Domain: Extracting and normalizing tool calls from three different provider formats (standard OpenAI, Hermes-style, special tokens)",
+      "Error Handling Domain: Mapping provider-specific transformation failures to appropriate HTTP status codes and error messages",
+      "Configuration Domain: Managing optional provider overrides and provider-specific settings (buffer limits, special tokens)"
+    ]
+  },
+  "technical_needs": {
+    "domain_model": {
+      "entities": {
+        "ModelFormat": {
+          "type": "enum (int)",
+          "values": ["FormatDeepSeek = iota", "FormatQwen", "FormatKimi", "FormatStandard"],
+          "purpose": "Identifies which tool calling response format OpenRouter will return based on the model being used. FormatDeepSeek and FormatStandard use standard OpenAI format, FormatQwen uses Hermes-style, FormatKimi uses special tokens",
+          "location": "internal/transform/types.go"
+        },
+        "TransformContext": {
+          "type": "struct",
+          "fields": {
+            "Format": "ModelFormat - The detected tool call format for this request based on model ID",
+            "Config": "*config.Config - Reference to global configuration for model mappings"
+          },
+          "purpose": "Encapsulates model format information and configuration for the transformation pipeline, passed through transformation functions instead of multiple parameters",
+          "location": "internal/transform/types.go"
+        },
+        "StreamState": {
+          "type": "struct",
+          "fields": {
+            "ContentBlockIndex": "int - Current content block index in Anthropic format",
+            "HasStartedTextBlock": "bool - Whether a text content block has been started",
+            "IsToolUse": "bool - Whether currently processing tool calls",
+            "CurrentToolCallID": "string - ID of the current tool call being streamed",
+            "ToolCallJSONMap": "map[string]string - Accumulated JSON arguments per tool call ID",
+            "FormatContext": "*FormatStreamContext - Model format-specific streaming state"
+          },
+          "purpose": "Consolidates all streaming state into a single struct to reduce parameter count from 8+ to 2 in processStreamDelta",
+          "location": "internal/transform/types.go"
+        },
+        "FormatStreamContext": {
+          "type": "struct",
+          "fields": {
+            "Format": "ModelFormat - Which tool call format is being streamed",
+            "KimiBuffer": "strings.Builder - Buffer for Kimi K2 special tokens across chunks",
+            "KimiBufferLimit": "int - Max buffer size (10KB)",
+            "KimiInToolSection": "bool - Whether currently inside tool_calls_section"
+          },
+          "purpose": "Isolates model format-specific streaming state (primarily Kimi K2 buffering) from general streaming state",
+          "location": "internal/transform/types.go"
+        },
+        "KimiToolCall": {
+          "type": "struct (temporary parsing helper)",
+          "fields": {
+            "ID": "string - Extracted from <|tool_call_begin|> section",
+            "Name": "string - Function name from tool_call_argument_begin section",
+            "Arguments": "string - JSON arguments string"
+          },
+          "purpose": "Temporary structure for parsing Kimi K2 special tokens before converting to standard ToolCall",
+          "location": "internal/transform/providers.go (internal to parseKimiToolCalls)"
+        }
+      },
+      "services": {
+        "DetectModelFormat": {
+          "signature": "func DetectModelFormat(modelID string) ModelFormat",
+          "purpose": "Analyzes model identifier to determine which tool call response format OpenRouter will use. Returns ModelFormat enum based on model name pattern matching with precedence: Kimi > Qwen > DeepSeek > Standard",
+          "algorithm": "1. Check OpenRouter format (provider/model split like 'moonshot/kimi-k2'), 2. Keyword matching with case-insensitivity (kimi, qwen, deepseek), 3. Fallback to FormatStandard (OpenAI-compatible)",
+          "location": "internal/transform/providers.go",
+          "complexity": "O(1) - simple string operations"
+        },
+        "parseKimiToolCalls": {
+          "signature": "func parseKimiToolCalls(content string) ([]ToolCall, error)",
+          "purpose": "Extracts tool calls from Kimi K2 special token format in OpenRouter responses. Parses <|tool_calls_section_begin|>...<|tool_calls_section_end|> blocks containing individual <|tool_call_begin|>...<|tool_call_end|> entries",
+          "algorithm": "1. Regex extract tool_calls_section, 2. Regex extract individual tool_call blocks, 3. Parse ID and JSON arguments, 4. Convert to ToolCall structs",
+          "location": "internal/transform/providers.go",
+          "error_handling": "Returns error if malformed special tokens detected"
+        },
+        "parseQwenToolCall": {
+          "signature": "func parseQwenToolCall(delta map[string]interface{}) []ToolCall",
+          "purpose": "Accepts both OpenAI tool_calls array AND Qwen-Agent function_call object from OpenRouter responses. Normalizes to ToolCall array format",
+          "algorithm": "1. Check for tool_calls array (vLLM format), 2. Check for function_call object (Qwen-Agent format), 3. Generate synthetic ID for function_call, 4. Return unified ToolCall array",
+          "location": "internal/transform/providers.go",
+          "complexity": "O(n) where n is number of tool calls"
+        },
+        "handleKimiStreaming": {
+          "signature": "func handleKimiStreaming(w http.ResponseWriter, flusher http.Flusher, state *StreamState, chunk string) error",
+          "purpose": "Buffers Kimi K2 special tokens across SSE chunks until complete tool_calls_section received. Converts complete sections to Anthropic SSE events",
+          "algorithm": "1. Append chunk to buffer, 2. Check buffer size < 10KB, 3. Check for section_end token, 4. Parse complete section, 5. Send Anthropic events, 6. Clear buffer",
+          "location": "internal/transform/streaming.go",
+          "error_handling": "Returns error if buffer exceeds 10KB limit"
+        },
+        "processStreamDelta": {
+          "signature": "func processStreamDelta(w http.ResponseWriter, flusher http.Flusher, delta map[string]interface{}, state *StreamState) error",
+          "purpose": "MODIFIED - Add provider-specific processing. Routes to handleKimiStreaming if Kimi provider, parseQwenToolCall if Qwen, or standard processing for DeepSeek/Standard",
+          "location": "internal/transform/streaming.go (modify existing function)",
+          "changes": "Add provider check at start, route to provider-specific handlers, maintain backward compatibility for Standard providers"
+        },
+        "transformMessage": {
+          "signature": "func transformMessage(msg Message, ctx *TransformContext) []OpenAIMessage",
+          "purpose": "MODIFIED - Add TransformContext parameter. No immediate provider-specific logic needed (all providers accept standard OpenAI tool definitions in requests)",
+          "location": "internal/transform/transform.go (modify existing function)",
+          "changes": "Add ctx parameter for future provider-specific request transformations, currently unused but maintains consistency"
+        },
+        "OpenAIToAnthropic": {
+          "signature": "func OpenAIToAnthropic(resp map[string]interface{}, modelName string, format ModelFormat) map[string]interface{}",
+          "purpose": "MODIFIED - Add format parameter. Apply format-specific parsing to tool_calls in response before converting to Anthropic format",
+          "location": "internal/transform/transform.go (modify existing function)",
+          "changes": "Add format-specific tool call parsing (parseKimiToolCalls, parseQwenToolCall) before standard transformation"
+        },
+        "sendStreamError": {
+          "signature": "func sendStreamError(w http.ResponseWriter, flusher http.Flusher, errorType string, message string)",
+          "purpose": "NEW - Sends Anthropic-format error SSE event and gracefully terminates stream when provider transformation fails",
+          "algorithm": "1. Marshal error event, 2. Send event: error, 3. Send message_stop event, 4. Flush",
+          "location": "internal/transform/streaming.go"
+        }
+      }
+    },
+    "persistence": null,
+    "router": {
+      "existing_endpoint": "/v1/messages in internal/server/server.go handleMessages()",
+      "modifications": {
+        "error_handling": "Add error handling for provider transformation failures after OpenRouter response received. Capture errors from transform.OpenAIToAnthropic() and transform.HandleStreaming(). Map transformation errors to appropriate HTTP status codes per error scenario matrix",
+        "logging": "Add provider detection logging - log detected provider alongside model mapping for debugging. Example: 'provider detected: kimi, model: moonshot/kimi-k2'",
+        "no_signature_changes": "No changes to handleMessages signature or request parsing logic - all provider detection happens inside transformation functions"
+      }
+    },
+    "events": null,
+    "dependencies": {
+      "extends": [
+        "transform.AnthropicToOpenAI() - Add TransformContext creation, format detection via DetectModelFormat(mappedModel), pass context to transformMessage",
+        "transform.transformMessage() - Add ctx *TransformContext parameter (currently unused, maintains consistency)",
+        "transform.OpenAIToAnthropic() - Add format ModelFormat parameter, call format-specific parsers (parseKimiToolCalls, parseQwenToolCall) on tool_calls before standard transformation",
+        "transform.HandleStreaming() - Create StreamState with FormatStreamContext, pass to processStreamDelta",
+        "transform.processStreamDelta() - Add state *StreamState parameter (replaces 8 individual parameters), route to handleKimiStreaming if format == FormatKimi, parseQwenToolCall if FormatQwen, standard processing otherwise"
+      ],
+      "new": [
+        "transform.DetectModelFormat(modelID string) ModelFormat - Model format detection function",
+        "transform.parseKimiToolCalls(content string) ([]ToolCall, error) - Kimi K2 special token parser",
+        "transform.parseQwenToolCall(delta map[string]interface{}) []ToolCall - Qwen Hermes dual format parser",
+        "transform.handleKimiStreaming() - Kimi-specific streaming with buffering",
+        "transform.sendStreamError() - Streaming error event sender",
+        "ModelFormat enum and associated types in types.go - Domain model structures",
+        "TransformContext struct in types.go - Context propagation",
+        "StreamState struct in types.go - Streaming state consolidation",
+        "FormatStreamContext struct in types.go - Model format-specific streaming state"
+      ],
+      "external_dependencies": [
+        "regexp package - For Kimi K2 special token parsing (pattern matching)",
+        "strings package - Already used, extended for format detection (case-insensitive matching, splitting)",
+        "fmt package - Already used, extended for buffer limit error messages"
+      ]
+    },
+    "error_handling": {
+      "client_errors_400": [
+        "Malformed tool definition in request - invalid JSON schema structure",
+        "Tool result references unknown tool_call_id - validation failure in validateToolCalls",
+        "Missing required tool parameter - schema validation failure (pre-existing, no changes needed)",
+        "Pre-send validation failure - provider-specific format requirements not met (future enhancement)"
+      ],
+      "server_errors_500": [
+        "Provider parsing logic fails unexpectedly - regex compilation error in parseKimiToolCalls",
+        "Transformation function panics - unexpected data structure from OpenRouter",
+        "JSON marshaling/unmarshaling failures - corrupt data in transformation pipeline",
+        "Buffer management errors - strings.Builder operations fail (extremely rare)"
+      ],
+      "gateway_errors_502": [
+        "OpenRouter returns malformed response - incomplete tool_calls structure",
+        "OpenRouter returns invalid JSON in tool arguments - cannot unmarshal to map[string]interface{}",
+        "Provider-specific format violations - Kimi missing end token, Qwen malformed function_call object",
+        "Kimi buffer exceeded 10KB limit - return 502 as OpenRouter provided too much data without completion token"
+      ],
+      "streaming_specific": [
+        "Send error SSE event (event: error, type: provider_transformation_error) when transformation fails mid-stream",
+        "Send message_stop SSE event after error to gracefully close stream",
+        "Do not attempt to recover from transformation errors - fail fast with clear error message",
+        "Log full error details at ERROR level for debugging while sending sanitized message to client"
+      ]
+    },
+    "implementation_order": {
+      "phase_1_foundation": [
+        "1. Add ModelFormat enum to types.go",
+        "2. Add TransformContext, StreamState, FormatStreamContext structs to types.go",
+        "3. Implement DetectModelFormat() in new providers.go file",
+        "4. Write unit tests for DetectModelFormat (12 test cases covering all patterns)",
+        "5. Modify AnthropicToOpenAI to create TransformContext and detect format",
+        "6. Verify DeepSeek passthrough still works (no transformation needed, existing tests pass)"
+      ],
+      "phase_2_kimi": [
+        "7. Implement parseKimiToolCalls() for non-streaming responses in providers.go",
+        "8. Write unit tests for parseKimiToolCalls (10 test cases - single, multiple, malformed)",
+        "9. Modify OpenAIToAnthropic to call parseKimiToolCalls when format == FormatKimi",
+        "10. Implement handleKimiStreaming() in new streaming.go file",
+        "11. Write streaming tests for Kimi (5 test cases - complete, split, buffer exceeded)",
+        "12. Modify processStreamDelta to route to handleKimiStreaming for Kimi format"
+      ],
+      "phase_3_qwen": [
+        "13. Implement parseQwenToolCall() for dual format acceptance in providers.go",
+        "14. Write unit tests for parseQwenToolCall (8 test cases - tool_calls array, function_call object, mixed)",
+        "15. Modify OpenAIToAnthropic to call parseQwenToolCall when format == FormatQwen",
+        "16. Handle Qwen streaming deltas in processStreamDelta",
+        "17. Write streaming tests for Qwen (5 test cases)"
+      ],
+      "phase_4_hardening": [
+        "18. Implement sendStreamError() helper in streaming.go",
+        "19. Add error handling to all transformation functions per error matrix",
+        "20. Add server.go error handling after OpenRouter response received",
+        "21. Add format detection logging to server.go",
+        "22. Write integration tests (full request/response cycles for all 3 providers)",
+        "23. Performance benchmarks (target <1ms transformation overhead)",
+        "24. Update documentation (CLAUDE.md, examples)"
+      ]
+    },
+    "performance_targets": {
+      "transformation_latency": "<1ms per request for format detection and transformation",
+      "memory_allocation": "<100KB per request (including 10KB Kimi buffer)",
+      "streaming_latency": "<50ms first byte time (format detection cached after first chunk)",
+      "buffer_limits": "10KB hard limit for Kimi K2 streaming buffers to prevent memory exhaustion"
+    },
+    "testing_strategy": {
+      "unit_tests": {
+        "format_detection": "12 test cases - OpenRouter format, keyword matching, case insensitivity, precedence, fallback",
+        "kimi_parsing": "15 test cases - single/multiple tool calls, streaming (complete, split, exceeded), malformed tokens",
+        "qwen_parsing": "12 test cases - tool_calls array, function_call object, mixed formats, edge cases",
+        "streaming": "20 test cases per format - single/multiple tool calls, text+tools, errors, buffer edge cases"
+
+      },
+      "integration_tests": {
+        "full_cycle": "Test complete Anthropic request → OpenRouter → format-specific parsing → Anthropic response for all 3 formats",
+        "multi_turn": "Test conversations with tool_use and tool_result across multiple turns",
+        "error_scenarios": "Test all error conditions from error matrix (400, 500, 502 scenarios)"
+      },
+      "performance_tests": {
+        "benchmarks": "Benchmark DetectModelFormat, parseKimiToolCalls, parseQwenToolCall, full transformation pipeline",
+        "memory_profiling": "Profile memory usage during Kimi K2 streaming with large buffers",
+        "throughput": "Measure requests/second with format-specific transformations enabled"
+      }
+    }
+  }
+}
