@@ -1,0 +1,41 @@
+# DeepSeek Tool Calling Configuration
+#
+# DeepSeek models use standard OpenAI-compatible tool calling format.
+# This configuration demonstrates how to use DeepSeek models with Claude Code
+# through Athena's proxy for function calling support.
+
+# Server configuration
+port: 12377
+base_url: "https://openrouter.ai/api/v1"
+
+# OpenRouter API key
+# Get your key from: https://openrouter.ai/keys
+api_key: "your-openrouter-api-key"
+
+# Model mappings - Map Claude model names to DeepSeek models
+opus_model: "deepseek/deepseek-chat"           # DeepSeek Chat (most capable)
+sonnet_model: "deepseek/deepseek-chat"         # Same model, adjust as needed
+haiku_model: "deepseek/deepseek-chat"          # Same model, adjust as needed
+model: "deepseek/deepseek-chat"                # Default model
+
+# Logging
+log_level: "info"  # Options: debug, info, warn, error
+
+# Tool Calling Notes:
+# - DeepSeek uses standard OpenAI tool calling format
+# - Tool definitions: Standard OpenAI `tools` array
+# - Tool calls: Standard `tool_calls` array with id, type, function
+# - Tool results: Standard `role: tool` with `tool_call_id`
+# - Streaming: Standard SSE format with delta.tool_calls
+#
+# Format Detection:
+# - Athena automatically detects DeepSeek models and applies FormatDeepSeek
+# - Detection based on model ID containing "deepseek"
+# - No special configuration needed for tool calling
+#
+# Example Usage:
+# 1. Replace "your-openrouter-api-key" with your actual API key
+# 2. Save this file as ~/.config/athena/athena.yml
+# 3. Run: athena start
+# 4. Configure Claude Code to use http://localhost:12377 as the API endpoint
+# 5. Tool calling works transparently through the proxy

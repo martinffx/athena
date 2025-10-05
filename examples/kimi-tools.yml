@@ -1,0 +1,51 @@
+# Kimi K2 Tool Calling Configuration
+#
+# Moonshot Kimi K2 models use special token format for tool calling.
+# Athena parses these special tokens and converts them to Anthropic format.
+
+# Server configuration
+port: 12377
+base_url: "https://openrouter.ai/api/v1"
+
+# OpenRouter API key
+# Get your key from: https://openrouter.ai/keys
+api_key: "your-openrouter-api-key"
+
+# Model mappings - Map Claude model names to Kimi models
+opus_model: "moonshot/moonshot-v1-k2"          # Kimi K2 (special token format)
+sonnet_model: "moonshot/moonshot-v1-k2"        # Same model
+haiku_model: "moonshot/moonshot-v1-k2"         # Same model
+model: "moonshot/moonshot-v1-k2"               # Default model
+
+# Logging
+log_level: "info"  # Options: debug, info, warn, error
+
+# Tool Calling Notes:
+# - Kimi K2 uses special token format for tool calling:
+#   <|tool_calls_section_begin|>
+#   <|tool_call_begin|>functions.get_weather:0<|tool_call_argument_begin|>{"city":"Tokyo"}<|tool_call_end|>
+#   <|tool_calls_section_end|>
+# - Athena's parseKimiToolCalls() extracts tool calls using regex patterns
+# - Tool ID format: functions.{function_name}:{index}
+# - JSON arguments validated and extracted
+#
+# Streaming Behavior:
+# - Special tokens may be split across multiple SSE chunks
+# - Athena buffers chunks until complete <|tool_calls_section_end|> received
+# - 10KB buffer limit to prevent memory exhaustion
+# - Buffer overflow returns "overloaded" error event
+#
+# Format Detection:
+# - Athena automatically detects Kimi models and applies FormatKimi
+# - Detection based on model ID containing "kimi", "moonshot-k2", or "-k2"
+# - No special configuration needed for tool calling
+#
+# Example Usage:
+# 1. Replace "your-openrouter-api-key" with your actual API key
+# 2. Save this file as ~/.config/athena/athena.yml
+# 3. Run: athena start
+# 4. Configure Claude Code to use http://localhost:12377 as the API endpoint
+# 5. Tool calling works transparently through the proxy
+#
+# Additional Resources:
+# - Kimi K2 Tool Calling Guide: https://huggingface.co/moonshotai/Kimi-K2-Instruct/blob/main/docs/tool_call_guidance.md

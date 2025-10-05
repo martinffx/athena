@@ -1,0 +1,49 @@
+# Qwen Tool Calling Configuration
+#
+# Qwen models support dual-format tool calling:
+# - Format 1 (vLLM): Standard tool_calls array
+# - Format 2 (Qwen-Agent): function_call object
+# Athena handles both formats transparently.
+
+# Server configuration
+port: 12377
+base_url: "https://openrouter.ai/api/v1"
+
+# OpenRouter API key
+# Get your key from: https://openrouter.ai/keys
+api_key: "your-openrouter-api-key"
+
+# Model mappings - Map Claude model names to Qwen models
+opus_model: "qwen/qwen-2.5-72b-instruct"       # Qwen 2.5 72B (most capable)
+sonnet_model: "qwen/qwen-2.5-32b-instruct"     # Qwen 2.5 32B (balanced)
+haiku_model: "qwen/qwen-2.5-7b-instruct"       # Qwen 2.5 7B (fast)
+model: "qwen/qwen-2.5-72b-instruct"            # Default model
+
+# Logging
+log_level: "info"  # Options: debug, info, warn, error
+
+# Tool Calling Notes:
+# - Qwen models support dual-format tool calling
+# - Format 1 (vLLM with hermes parser):
+#   {"tool_calls":[{"id":"call-123","type":"function","function":{"name":"get_weather","arguments":"{...}"}}]}
+# - Format 2 (Qwen-Agent):
+#   {"function_call":{"name":"get_weather","arguments":"{...}"}}
+# - Athena's parseQwenToolCall() handles both formats
+# - Synthetic IDs generated for function_call format: qwen-tool-{timestamp}-{counter}
+#
+# Format Detection:
+# - Athena automatically detects Qwen models and applies FormatQwen
+# - Detection based on model ID containing "qwen"
+# - No special configuration needed for tool calling
+#
+# Known Issues:
+# - Qwen 2.5-Coder has unreliable tool calling (avoid)
+# - Qwen 3/Qwen 3-Coder has improved reliability
+# - Context window approaching limits (>100K) may cause issues
+#
+# Example Usage:
+# 1. Replace "your-openrouter-api-key" with your actual API key
+# 2. Save this file as ~/.config/athena/athena.yml
+# 3. Run: athena start
+# 4. Configure Claude Code to use http://localhost:12377 as the API endpoint
+# 5. Tool calling works transparently through the proxy

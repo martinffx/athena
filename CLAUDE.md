@@ -33,13 +33,17 @@ Athena is a Go-based HTTP proxy server that translates Anthropic API requests to
 - **Message Transformation**: Bidirectional conversion between Anthropic and OpenAI/OpenRouter formats
 - **Streaming Handler**: Server-Sent Events (SSE) processing with proper buffering
 - **Model Mapping**: Configurable mappings for claude-3-opus/sonnet/haiku to any OpenRouter model
-- **Tool/Function Support**: Complete tool calling with JSON schema cleaning
+- **Tool/Function Support**: Complete tool calling with provider-specific format handling and JSON schema cleaning
+- **Provider Format Detection**: Automatic detection and handling of provider-specific tool calling formats (Kimi K2, Qwen, DeepSeek, Standard)
 
 ### Data Structures
 - `AnthropicRequest/Response` - Anthropic Messages API format
-- `OpenAIRequest/Message` - OpenRouter/OpenAI chat completions format  
+- `OpenAIRequest/Message` - OpenRouter/OpenAI chat completions format
 - `Config` - Unified configuration structure
 - `ContentBlock` - Handles text, tool_use, and tool_result content types
+- `ModelFormat` - Enum for provider-specific tool calling formats
+- `Context` - Transformation context with detected format and configuration
+- `StreamState` - Streaming state management for SSE processing
 
 ## Development Commands
 
@@ -168,16 +172,68 @@ Config file discovery:
 - **Tool validation**: Ensures tool_calls have matching tool responses via `validateToolCalls()`
 - **JSON schema cleaning**: Removes unsupported `format: "uri"` properties from tool schemas
 
-### Streaming Implementation  
+### Tool Calling Format Support
+
+Athena supports four distinct tool calling formats with automatic detection and transformation:
+
+#### 1. Standard Format (OpenAI-compatible)
+- **Models**: Most OpenRouter models, GPT-4, Claude, etc.
+- **Format**: Standard `tool_calls` array with `id`, `type`, `function` fields
+- **Implementation**: Default passthrough behavior
+
+#### 2. DeepSeek Format
+- **Models**: DeepSeek models (deepseek/deepseek-chat, etc.)
+- **Format**: Pure OpenAI-compatible (same as Standard)
+- **Implementation**: Separated for future customization
+
+#### 3. Qwen Format (Dual-format)
+- **Models**: Qwen models (qwen/qwen-2.5-72b-instruct, etc.)
+- **Format**: Supports BOTH `tool_calls` array AND `function_call` object
+- **Implementation**: `parseQwenToolCall()` handles both vLLM and Qwen-Agent formats
+- **Special handling**: Synthetic ID generation for `function_call` format
+
+#### 4. Kimi K2 Format (Special tokens)
+- **Models**: Moonshot Kimi K2 (moonshot/moonshot-v1-k2)
+- **Format**: Special token delimiters with embedded JSON
+  ```
+  <|tool_calls_section_begin|>
+  <|tool_call_begin|>functions.get_weather:0<|tool_call_argument_begin|>{"city":"Tokyo"}<|tool_call_end|>
+  <|tool_calls_section_end|>
+  ```
+- **Implementation**: `parseKimiToolCalls()` with regex extraction
+- **Special handling**: Buffer-based streaming with 10KB limit
+
+#### Format Detection Strategy
+
+The `DetectModelFormat()` function analyzes model identifiers with the following precedence:
+
+```go
+// 1. OpenRouter format (provider/model)
+moonshot/* → FormatKimi
+qwen/* → FormatQwen
+deepseek/* → FormatDeepSeek
+
+// 2. Keyword matching (precedence: Kimi > Qwen > DeepSeek)
+Contains "kimi", "moonshot-k2", "-k2" → FormatKimi
+Contains "qwen" → FormatQwen
+Contains "deepseek" → FormatDeepSeek
+
+// 3. Default fallback
+→ FormatStandard
+```
+
+### Streaming Implementation
 - **Line-by-line processing**: Buffers incomplete SSE lines from OpenRouter
 - **Event mapping**: Converts OpenAI delta events to Anthropic content block events
 - **State management**: Tracks content block indices and tool call state during streaming
+- **Format-specific handling**: Routes to appropriate parser based on detected format
+- **Kimi buffering**: Accumulates special tokens until complete section received
 
 ### Model Mapping Strategy
 ```go
 // Built-in model detection
 if strings.Contains(model, "opus") → config.OpusModel
-if strings.Contains(model, "sonnet") → config.SonnetModel  
+if strings.Contains(model, "sonnet") → config.SonnetModel
 if strings.Contains(model, "haiku") → config.HaikuModel
 if strings.Contains(model, "/") → pass-through (OpenRouter model ID)
 else → config.Model (default)
@@ -228,8 +284,23 @@ GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o athena-linux-amd64 ./cmd/at
 ```yaml
 # Use different providers for different model tiers
 opus_model: "anthropic/claude-3-opus"      # High-end
-sonnet_model: "openai/gpt-4"              # Mid-tier  
+sonnet_model: "openai/gpt-4"              # Mid-tier
 haiku_model: "google/gemini-pro"          # Fast/cheap
+```
+
+### Tool calling with provider-specific formats
+```yaml
+# Kimi K2 with special token parsing
+opus_model: "moonshot/moonshot-v1-k2"
+api_key: "your-openrouter-key"
+
+# Qwen with dual-format support
+sonnet_model: "qwen/qwen-2.5-72b-instruct"
+api_key: "your-openrouter-key"
+
+# DeepSeek with standard OpenAI format
+haiku_model: "deepseek/deepseek-chat"
+api_key: "your-openrouter-key"
 ```
 
 ### Local development with Ollama
